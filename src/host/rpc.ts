@@ -25,6 +25,7 @@ export const RPC_PREFIX = 'mcp-manager'
 export const ENDPOINTS = [
   'overview',
   'reconnect',
+  'reconnectServer',
   'detail',
   'saveServer',
   'deleteServer',
@@ -401,6 +402,14 @@ async function logout(deps: RpcDeps, payload: unknown): Promise<{ ok: true }> {
   return { ok: true }
 }
 
+async function reconnectServer(deps: RpcDeps, payload: unknown): Promise<{ ok: true }> {
+  const fields = requireRecord(payload)
+  const target = targetOf(deps, fields)
+  const name = requireString(fields, 'name')
+  deps.manager.reconnectScope(scopeIdOf(deps, target, name))
+  return { ok: true }
+}
+
 async function dispatch(deps: RpcDeps, endpoint: RpcEndpoint, payload: unknown): Promise<unknown> {
   switch (endpoint) {
     case 'overview':
@@ -408,6 +417,8 @@ async function dispatch(deps: RpcDeps, endpoint: RpcEndpoint, payload: unknown):
     case 'reconnect':
       deps.manager.reconnectAll()
       return { ok: true }
+    case 'reconnectServer':
+      return reconnectServer(deps, payload)
     case 'detail':
       return detail(deps, payload)
     case 'saveServer':

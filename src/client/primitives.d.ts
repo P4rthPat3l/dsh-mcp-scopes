@@ -66,6 +66,43 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>,
   ): ReactElement
 
+  export type MenuEntry =
+    | ({
+        readonly id: string
+        readonly label: ReactNode
+        readonly icon?: ReactNode
+        readonly disabled?: boolean
+        readonly danger?: boolean
+        readonly shortcut?: { readonly keys: readonly string[]; readonly aria?: string }
+        readonly submenu?: readonly MenuEntry[]
+      } & Record<string, unknown>)
+    | { readonly type: 'separator'; readonly id: string }
+    | { readonly type: 'label'; readonly id: string; readonly text: ReactNode }
+
+  export function Menu(props: {
+    open: boolean
+    anchor: ReactElement
+    items?: readonly MenuEntry[]
+    children?: ReactNode
+    selectedId?: string
+    selectedIds?: readonly string[]
+    onSelect?: (id: string) => void
+    onClose: () => void
+    align?: 'start' | 'end'
+    side?: 'bottom' | 'top'
+    portal?: boolean
+    autoFocus?: boolean
+    selection?: 'check' | 'fill'
+    className?: string
+    listClassName?: string
+    minWidthFromAnchor?: boolean
+    footer?: readonly MenuEntry[]
+    dense?: boolean
+    compact?: boolean
+    closeOnPointerLeave?: boolean
+    getAnchorRect?: () => DOMRect | null
+  }): ReactElement
+
   export function SegmentedControl<V extends string>(props: {
     id: string
     value: V

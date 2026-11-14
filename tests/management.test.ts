@@ -136,6 +136,38 @@ test('AC-015: save, enable, and delete a profile server through RPC', async () =
 })
 
 
+test('AC-015: reconnectServer reconnects only the named server', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mcp-manager-retry-'))
+  const routes = new Map<string, ConnectionFetchRoute>()
+  const store = new ConfigStore(join(dir, 'profile.json'))
+  const manager = new ConnectionManager(makeCtx(new ToolRegistry()), undefined)
+  try {
+    registerRpc(rpcContext(routes), {
+      store,
+      manager,
+      workspaces: undefined,
+      profile: () => ({ version: 1, servers: [] }),
+      credentials: undefined,
+      oauth: undefined,
+      reloadProfile: async () => undefined,
+      reattachWorkspace: async () => undefined,
+    })
+    const scopes: string[] = []
+    manager.reconnectScope = (scopeId: string) => {
+      scopes.push(scopeId)
+    }
+    const result = await callRoute(routes, 'reconnectServer', { scope: 'profile', name: 'demo' })
+    assert.equal(result.ok, true)
+    assert.deepEqual(scopes, ['profile:demo'])
+    const missing = await callRoute(routes, 'reconnectServer', { scope: 'profile' })
+    assert.equal(missing.ok, false)
+    assert.equal(missing.error?.code, 'bad-request')
+  } finally {
+    await manager.dispose()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('AC-016: hiding a profile server in a workspace writes the override and marks it hidden', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mcp-manager-workspace-'))
   const routes = new Map<string, ConnectionFetchRoute>()

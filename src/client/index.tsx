@@ -53,8 +53,6 @@ export function apply(ctx: ClientContext): void {
   const t = locale === undefined ? (key: string): string => key : locale.bind(NS)
   const surface = (): PageProps => ({ store, t })
 
-  ctx.effect(() => store.start(), 'dsh-mcp-manager: overview polling')
-
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
       {

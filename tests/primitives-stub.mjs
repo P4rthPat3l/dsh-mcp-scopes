@@ -37,6 +37,29 @@ export function Tag({ tone, className, children }) {
   return h('span', { 'data-tone': tone, className }, children)
 }
 
+export function Menu({ open, anchor, items = [], onSelect }) {
+  return h(
+    'span',
+    { className: 'menu-stub' },
+    anchor,
+    open
+      ? h(
+          'div',
+          { role: 'menu' },
+          items
+            .filter((item) => item.type === undefined)
+            .map((item) =>
+              h(
+                'button',
+                { key: item.id, type: 'button', role: 'menuitem', onClick: () => onSelect?.(item.id) },
+                item.label,
+              ),
+            ),
+        )
+      : null,
+  )
+}
+
 export function Pill({ active, className, children, onClick, ...rest }) {
   return h('button', { type: 'button', 'aria-pressed': active, className, onClick, ...rest }, children)
 }
@@ -112,6 +135,7 @@ export const IconChevronRightOutlineRegular = Icon
 export const IconCloseOutlineRegular = Icon
 export const IconEditOutlineRegular = Icon
 export const IconPlusOutlineRegular = Icon
+export const IconSearchOutlineRegular = Icon
 export const IconRefreshOutlineRegular = Icon
 export const IconTrashOutlineRegular = Icon
 export const IconWarningOutlineRegular = Icon

@@ -1,27 +1,28 @@
 /** The MCP servers settings page, composed from Harness primitives. */
 
-import { useSyncExternalStore, useState, type ReactElement } from 'react'
+import { useEffect, useState, useSyncExternalStore, type ReactElement } from 'react'
 import {
   Button,
   Input,
+  Menu,
   Modal,
   PathLabel,
-  Pill,
   SegmentedTabs,
   StateDot,
   Switch,
   Tag,
   TextShimmer,
   Toast,
-  IconApiOutlineRegular,
   IconChevronDownOutlineRegular,
   IconChevronRightOutlineRegular,
   IconEditOutlineRegular,
   IconPlusOutlineRegular,
   IconRefreshOutlineRegular,
+  IconSearchOutlineRegular,
   IconTrashOutlineRegular,
   IconWarningOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { OverviewServer, ServerDetail } from './harness.js'
 import type { OverviewStore, Snapshot } from './store.js'
 import {
@@ -29,9 +30,7 @@ import {
   Editor,
   draftFromDetail,
   draftToServer,
-  validateDraft,
   type Draft,
-  type DraftProblem,
 } from './editor.js'
 
 export interface PageProps extends Record<string, unknown> {
@@ -41,6 +40,7 @@ export interface PageProps extends Record<string, unknown> {
 
 type DetailTab = 'tools' | 'resources' | 'prompts' | 'instructions' | 'activity'
 type DotState = 'done' | 'warning' | 'ongoing' | 'error' | 'idle'
+type StatusTone = 'success' | 'warning' | 'error' | 'muted'
 
 interface TargetPayload {
   readonly scope: 'profile' | 'workspace'
@@ -57,18 +57,24 @@ interface EditorState {
   readonly previousName?: string
   readonly draft: Draft
   readonly error?: string
+  readonly detail?: ServerDetail
 }
 
 interface Notice {
   readonly seq: number
   readonly text: string
-  readonly tone?: 'success'
 }
 
-const PROBLEM_KEY: Record<DraftProblem, string> = {
-  name: 'requiredName',
-  connection: 'requiredConnection',
-  url: 'requiredUrl',
+interface ConfirmState {
+  readonly kind: 'delete' | 'clearToken'
+  readonly server: OverviewServer
+  readonly target: TargetPayload
+}
+
+interface StatusView {
+  readonly state: DotState
+  readonly label: string
+  readonly tone: StatusTone
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -88,28 +94,24 @@ function keyOf(server: OverviewServer): string {
   return `${server.origin ?? 'profile'}:${server.name}`
 }
 
-function statusOf(
-  server: OverviewServer,
-  own: boolean,
-  t: (key: string) => string,
-): { state: DotState; label: string } {
-  if (!own && server.hidden === true) return { state: 'idle', label: t('hiddenHere') }
-  if (server.disabled) return { state: 'idle', label: t('statusDisabled') }
+function statusOf(server: OverviewServer, own: boolean, t: (key: string) => string): StatusView {
+  if (!own && server.hidden === true) return { state: 'idle', label: t('hiddenHere'), tone: 'muted' }
+  if (server.disabled === true) return { state: 'idle', label: t('statusDisabled'), tone: 'muted' }
   switch (server.status) {
     case 'connecting':
-      return { state: 'ongoing', label: t('statusConnecting') }
+      return { state: 'ongoing', label: t('statusConnecting'), tone: 'warning' }
     case 'ready':
-      return { state: 'done', label: t('statusReady') }
+      return { state: 'done', label: t('statusReady'), tone: 'success' }
     case 'needs_auth':
-      return { state: 'warning', label: t('statusNeedsAuth') }
+      return { state: 'warning', label: t('statusNeedsAuth'), tone: 'warning' }
     case 'needs_token':
-      return { state: 'warning', label: t('statusNeedsToken') }
+      return { state: 'warning', label: t('statusNeedsToken'), tone: 'warning' }
     case 'error':
-      return { state: 'error', label: t('statusError') }
+      return { state: 'error', label: t('statusError'), tone: 'error' }
     case 'disabled':
-      return { state: 'idle', label: t('statusDisabled') }
+      return { state: 'idle', label: t('statusDisabled'), tone: 'muted' }
     default:
-      return { state: 'idle', label: t('statusIdle') }
+      return { state: 'idle', label: t('statusIdle'), tone: 'muted' }
   }
 }
 
@@ -123,10 +125,13 @@ function authLabel(server: OverviewServer, t: (key: string) => string): string {
   return t('authNone')
 }
 
+function countLabel(count: number, t: (key: string) => string): string {
+  return count + ' ' + (count === 1 ? t('toolUnit') : t('toolsUnit'))
+}
+
 interface RowProps {
   readonly server: OverviewServer
   readonly own: boolean
-  readonly target: TargetPayload
   readonly expanded: boolean
   readonly tab: DetailTab
   readonly busy: boolean
@@ -145,6 +150,7 @@ interface RowProps {
   readonly onSaveToken: () => void
   readonly onClearToken: () => void
   readonly onSignIn: () => void
+  readonly onReopenSignIn: () => void
   readonly onCompleteSignIn: () => void
   readonly onCancelSignIn: () => void
   readonly onSignOut: () => void
@@ -157,10 +163,11 @@ function AuthPanel(props: RowProps): ReactElement | null {
   const { server, t } = props
   if (server.authKind === 'bearer') {
     if (server.status === 'ready' && !props.authReveal) {
+      if (server.authConfigured === false) return null
       return (
         <div className="mcp-auth-line">
           <Tag tone="quiet">{t('token')}</Tag>
-          <span className="mcp-muted">{t('tokenStored')}</span>
+          <span className="mcp-auth-note">{t('tokenStored')}</span>
           <Button variant="ghost" size="sm" onClick={() => props.onAuthReveal(true)}>
             {t('replaceToken')}
           </Button>
@@ -172,7 +179,7 @@ function AuthPanel(props: RowProps): ReactElement | null {
     }
     return (
       <div className="mcp-auth">
-        <span className="mcp-muted">
+        <span className="mcp-auth-note" id={`mcp-token-note-${server.name}`}>
           {server.status === 'needs_token' ? t('tokenNeedsValue') : t('tokenReplaceHint')}
         </span>
         <div className="mcp-auth-row">
@@ -180,8 +187,11 @@ function AuthPanel(props: RowProps): ReactElement | null {
             id={`mcp-token-${server.name}`}
             className="mcp-input"
             type="password"
+            aria-label={t('token')}
             placeholder={t('tokenPlaceholder')}
             autoComplete="off"
+            autoFocus={props.authReveal}
+            aria-describedby={`mcp-token-note-${server.name}`}
             value={props.tokenValue}
             onChange={(event) => props.onTokenValue(event.target.value)}
           />
@@ -193,7 +203,7 @@ function AuthPanel(props: RowProps): ReactElement | null {
           >
             {t('saveToken')}
           </Button>
-          {server.status === 'ready' ? (
+          {props.authReveal ? (
             <Button variant="ghost" size="sm" onClick={() => props.onAuthReveal(false)}>
               {t('cancel')}
             </Button>
@@ -204,14 +214,17 @@ function AuthPanel(props: RowProps): ReactElement | null {
   }
   if (server.authKind === 'oauth') {
     if (server.status === 'needs_auth') {
-      if (props.attempt !== undefined || server.oauthAttemptId !== undefined) {
+      const waiting = props.attempt !== undefined || server.oauthAttemptId !== undefined
+      if (waiting) {
         return (
           <div className="mcp-auth">
-            <span className="mcp-muted">{t('waitingSignIn')}</span>
+            <span className="mcp-auth-note">{t('waitingSignIn')}</span>
             <div className="mcp-auth-row">
               <Input
                 id={`mcp-redirect-${server.name}`}
                 className="mcp-input"
+                aria-label={t('pasteRedirect')}
+                aria-describedby={`mcp-redirect-hint-${server.name}`}
                 placeholder={t('pasteRedirect')}
                 autoComplete="off"
                 spellCheck={false}
@@ -229,14 +242,19 @@ function AuthPanel(props: RowProps): ReactElement | null {
               <Button variant="ghost" size="sm" disabled={props.busy} onClick={props.onCancelSignIn}>
                 {t('cancelSignIn')}
               </Button>
+              <Button variant="ghost" size="sm" onClick={props.onReopenSignIn}>
+                {t('reopenSignIn')}
+              </Button>
             </div>
-            <span className="mcp-hint">{t('pasteHint')}</span>
+            <span className="mcp-hint" id={`mcp-redirect-hint-${server.name}`}>
+              {t('pasteHint')}
+            </span>
           </div>
         )
       }
       return (
         <div className="mcp-auth">
-          <span className="mcp-muted">{t('oauthNeeded')}</span>
+          <span className="mcp-auth-note">{t('oauthNeeded')}</span>
           <div className="mcp-auth-row">
             <Button variant="primary" size="sm" disabled={props.busy} onClick={props.onSignIn}>
               {t('signIn')}
@@ -250,7 +268,7 @@ function AuthPanel(props: RowProps): ReactElement | null {
       return (
         <div className="mcp-auth-line">
           <Tag tone="quiet">{t('authOAuth')}</Tag>
-          <span className="mcp-muted">{t('oauthSignedIn')}</span>
+          <span className="mcp-auth-note">{t('oauthSignedIn')}</span>
           <Button variant="ghost" size="sm" onClick={props.onSignOut} disabled={props.busy}>
             {t('signOut')}
           </Button>
@@ -261,25 +279,54 @@ function AuthPanel(props: RowProps): ReactElement | null {
   return null
 }
 
+function ToolList(props: { readonly server: OverviewServer; readonly t: (key: string) => string }): ReactElement {
+  const { server, t } = props
+  const [filter, setFilter] = useState('')
+  const tools =
+    server.toolDetails !== undefined && server.toolDetails.length > 0
+      ? server.toolDetails
+      : server.tools.map((name) => ({ name, description: '' }))
+  const query = filter.trim().toLowerCase()
+  const shown =
+    query === ''
+      ? tools
+      : tools.filter(
+          (tool) => tool.name.toLowerCase().includes(query) || tool.description.toLowerCase().includes(query),
+        )
+  if (tools.length === 0) return <p className="mcp-empty-line">{t('noTools')}</p>
+  return (
+    <>
+      {tools.length > 6 ? (
+        <Input
+          className="mcp-filter"
+          icon={<IconSearchOutlineRegular size={14} />}
+          placeholder={t('filterTools')}
+          aria-label={t('filterTools')}
+          autoComplete="off"
+          spellCheck={false}
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+        />
+      ) : null}
+      {shown.length === 0 ? (
+        <p className="mcp-empty-line">{t('filterEmpty')}</p>
+      ) : (
+        <ul className="mcp-items">
+          {shown.map((tool) => (
+            <li key={tool.name} className="mcp-item">
+              <span className="mcp-mono mcp-item-name">{tool.name}</span>
+              {tool.description === '' ? null : <span className="mcp-item-desc">{tool.description}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  )
+}
+
 function DetailBody(props: RowProps): ReactElement {
   const { server, tab, t } = props
-  if (tab === 'tools') {
-    const tools =
-      server.toolDetails !== undefined && server.toolDetails.length > 0
-        ? server.toolDetails
-        : server.tools.map((name) => ({ name, description: '' }))
-    if (tools.length === 0) return <p className="mcp-empty-line">{t('noTools')}</p>
-    return (
-      <ul className="mcp-items">
-        {tools.map((tool) => (
-          <li key={tool.name} className="mcp-item">
-            <span className="mcp-mono mcp-item-name">{tool.name}</span>
-            {tool.description === '' ? null : <span className="mcp-item-desc">{tool.description}</span>}
-          </li>
-        ))}
-      </ul>
-    )
-  }
+  if (tab === 'tools') return <ToolList server={server} t={t} />
   if (tab === 'resources') {
     const resources = server.resources ?? []
     if (resources.length === 0) return <p className="mcp-empty-line">{t('noResources')}</p>
@@ -315,17 +362,12 @@ function DetailBody(props: RowProps): ReactElement {
   if (tab === 'instructions') {
     const instructions = server.instructions ?? ''
     if (instructions.trim() === '') return <p className="mcp-empty-line">{t('noInstructions')}</p>
-    return (
-      <>
-        <pre className="mcp-pre">{instructions}</pre>
-        <p className="mcp-hint">{instructions.length + ' ' + t('bytes')}</p>
-      </>
-    )
+    return <pre className="mcp-pre">{instructions}</pre>
   }
-  if (server.logs.length === 0) return <p className="mcp-empty-line">{t('noLogs')}</p>
+  if (server.logs.length === 0) return <p className="mcp-empty-line">{t('noActivity')}</p>
   return (
     <ul className="mcp-logs">
-      {server.logs.slice(-8).map((line, index) => (
+      {server.logs.slice(-12).map((line, index) => (
         <li key={`${line.time}-${index}`} className={`mcp-log-${line.level}`}>
           <time dateTime={line.time}>{new Date(line.time).toLocaleTimeString()}</time> {line.message}
         </li>
@@ -334,106 +376,110 @@ function DetailBody(props: RowProps): ReactElement {
   )
 }
 
-function ServerRow(props: RowProps): ReactElement {
+function ServerCard(props: RowProps): ReactElement {
   const { server, own, t } = props
   const status = statusOf(server, own, t)
   const checked = own ? !server.disabled : server.hidden !== true
   const locked = !own && server.disabled === true
-  const attemptId = props.attempt?.attemptId ?? server.oauthAttemptId
+  const need =
+    !own || server.disabled === true
+      ? undefined
+      : server.status === 'needs_token'
+        ? 'token'
+        : server.status === 'needs_auth'
+          ? 'auth'
+          : undefined
+  const nameId = `mcp-name-${keyOf(server).replace(/[^A-Za-z0-9_-]/g, '-')}`
+  const detailsId = `mcp-details-${keyOf(server).replace(/[^A-Za-z0-9_-]/g, '-')}`
+  const panelId = `mcp-panel-${keyOf(server).replace(/[^A-Za-z0-9_-]/g, '-')}`
+  const tabId = (tab: DetailTab): string => `mcp-tab-${keyOf(server).replace(/[^A-Za-z0-9_-]/g, '-')}-${tab}`
+  const meta = [
+    server.toolCount > 0 ? countLabel(server.toolCount, t) : '',
+    transportLabel(server, t),
+    server.authKind === 'none' ? '' : authLabel(server, t),
+  ].filter((part) => part !== '')
 
   const cta =
-    own && server.status === 'needs_token' ? (
+    own && need === 'token' ? (
       <Button variant="primary" size="sm" onClick={props.onSetToken}>
         {t('setToken')}
       </Button>
-    ) : own && server.status === 'needs_auth' ? (
-      <Button variant="primary" size="sm" onClick={props.onSignIn}>
+    ) : own && need === 'auth' ? (
+      <Button variant="primary" size="sm" onClick={props.onSignIn} disabled={props.busy}>
         {t('signIn')}
       </Button>
     ) : null
-  const showStatus =
-    status.state === 'error' ||
-    status.state === 'ongoing' ||
-    (status.state === 'warning' && cta === null)
 
-  const tabItems = [
-    { value: 'tools' as const, label: t('tools') + (server.toolCount > 0 ? ` ${server.toolCount}` : '') },
+  const tabItems = ([
+    { value: 'tools' as const, label: t('tools') + (server.toolCount > 0 ? ' ' + server.toolCount : '') },
     {
       value: 'resources' as const,
-      label: t('resources') + ((server.resources?.length ?? 0) > 0 ? ` ${server.resources?.length}` : ''),
+      label: t('resources') + ((server.resources?.length ?? 0) > 0 ? ' ' + (server.resources?.length ?? 0) : ''),
     },
     {
       value: 'prompts' as const,
-      label: t('prompts') + ((server.prompts?.length ?? 0) > 0 ? ` ${server.prompts?.length}` : ''),
+      label: t('prompts') + ((server.prompts?.length ?? 0) > 0 ? ' ' + (server.prompts?.length ?? 0) : ''),
     },
     { value: 'instructions' as const, label: t('instructions') },
     { value: 'activity' as const, label: t('activity') },
-  ]
+  ] as const).map((item) => ({ ...item, id: tabId(item.value), panelId }))
 
   return (
-    <article className="mcp-row" data-open={props.expanded || undefined}>
-      <div className="mcp-row-main">
-        <span className="mcp-dot" title={status.label} aria-label={status.label}>
-          <StateDot state={status.state} />
-        </span>
-        <button type="button" className="mcp-ident" onClick={props.onToggle} aria-expanded={props.expanded}>
-          <span className="mcp-name-line">
-            <span className="mcp-name">{server.name}</span>
-            <Tag tone="outline">{transportLabel(server, t)}</Tag>
-            <Tag tone="quiet">{authLabel(server, t)}</Tag>
-            {server.origin === 'workspace' ? <Tag tone="neutral">{t('workspace')}</Tag> : null}
-            {!own && server.origin === 'profile' ? <Tag tone="neutral">{t('profile')}</Tag> : null}
-            {!own && server.hidden === true ? <Tag tone="warning">{t('hiddenHere')}</Tag> : null}
+    <article className="mcp-card" data-open={props.expanded || undefined} aria-labelledby={nameId}>
+      <div className="mcp-card-head">
+        <button
+          type="button"
+          className="mcp-card-ident"
+          onClick={props.onToggle}
+          aria-expanded={props.expanded}
+          {...(props.expanded ? { 'aria-controls': detailsId } : {})}
+        >
+          <span className="mcp-card-dot">
+            <StateDot state={status.state} />
           </span>
-          <span className="mcp-target" title={server.target}>
-            {server.target}
+          <span className="mcp-card-text">
+            <span className="mcp-card-title">
+              <span className="mcp-card-name" id={nameId}>
+                {server.name}
+              </span>
+              {own ? null : <Tag tone="quiet">{t('inherited')}</Tag>}
+            </span>
+            <span className="mcp-card-target" title={server.target}>
+              {server.target}
+            </span>
+            <span className="mcp-card-meta">
+              <span className="mcp-card-status" data-tone={status.tone}>
+                {status.state === 'ongoing' ? <TextShimmer active>{status.label}</TextShimmer> : status.label}
+              </span>
+              {meta.map((part) => (
+                <span key={part} className="mcp-card-meta-part">
+                  <span className="mcp-card-sep" aria-hidden="true">
+                    ·
+                  </span>
+                  <span>{part}</span>
+                </span>
+              ))}
+            </span>
+            {server.error === undefined ? null : <span className="mcp-card-error">{server.error}</span>}
           </span>
         </button>
-        <div className="mcp-row-end">
-          {showStatus ? (
-            <span className={`mcp-status mcp-status-${status.state}`}>
-              {status.state === 'ongoing' ? <TextShimmer active>{status.label}</TextShimmer> : status.label}
-            </span>
-          ) : null}
+        <div className="mcp-card-end">
           {cta}
           <Switch
             checked={checked}
-            label={`${server.name} ${t('enabled')}`}
+            label={own ? `${server.name} ${t('enabled')}` : `${server.name} ${t('availableHere')}`}
             disabled={locked || props.busy}
-            title={locked ? t('lockedInProfile') : undefined}
+            title={
+              locked ? t('lockedInProfile') : own ? t('enabledHint') : t('inheritedSwitchHint')
+            }
             onChange={(next) => props.onEnabled(next)}
           />
-          {own ? (
-            <>
-              <Button
-                variant="toolbar"
-                size="sm"
-                aria-label={t('edit')}
-                title={t('edit')}
-                icon={<IconEditOutlineRegular size={14} />}
-                disabled={props.busy}
-                onClick={props.onEdit}
-              />
-              <Button
-                variant="toolbar"
-                size="sm"
-                aria-label={t('delete')}
-                title={t('delete')}
-                icon={<IconTrashOutlineRegular size={14} />}
-                disabled={props.busy}
-                onClick={props.onDelete}
-              />
-            </>
-          ) : (
-            <Button variant="ghost" size="sm" onClick={props.onManageProfile}>
-              {t('manageInProfile')}
-            </Button>
-          )}
           <Button
-            variant="toolbar"
+            variant="ghost"
             size="sm"
-            aria-label={t('details')}
-            title={props.expanded ? t('hideDetails') : t('details')}
+            aria-label={`${props.expanded ? t('hideDetails') : t('details')} ${server.name}`}
+            aria-expanded={props.expanded}
+            {...(props.expanded ? { 'aria-controls': detailsId } : {})}
             icon={
               props.expanded ? (
                 <IconChevronDownOutlineRegular size={14} />
@@ -447,17 +493,17 @@ function ServerRow(props: RowProps): ReactElement {
       </div>
 
       {props.expanded ? (
-        <div className="mcp-details">
-          {own ? <AuthPanel {...props} /> : null}
+        <div className="mcp-card-details" id={detailsId}>
           {server.error === undefined ? null : (
             <div className="mcp-error-row" role="alert">
               <IconWarningOutlineRegular size={14} />
               <span>{server.error}</span>
               <Button variant="ghost" size="sm" onClick={props.onRetry} disabled={props.busy}>
-                {t('retryServer')}
+                {t('retry')}
               </Button>
             </div>
           )}
+          {own ? <AuthPanel {...props} /> : null}
           <SegmentedTabs<DetailTab>
             items={tabItems}
             value={props.tab}
@@ -465,41 +511,62 @@ function ServerRow(props: RowProps): ReactElement {
             label={t('details')}
             size="sm"
           />
-          <div className="mcp-detail-body">
+          <div
+            className="mcp-detail-body"
+            id={panelId}
+            role="tabpanel"
+            aria-labelledby={tabId(props.tab)}
+            tabIndex={0}
+          >
             <DetailBody {...props} />
           </div>
-          {attemptId === undefined ? null : <span className="mcp-hint">{t('signInPending')}</span>}
+          {server.status === 'needs_auth' && props.attempt !== undefined ? (
+            <span className="mcp-hint">{t('signInPending')}</span>
+          ) : null}
+          <div className="mcp-card-foot">
+            {own ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<IconEditOutlineRegular size={14} />}
+                  disabled={props.busy}
+                  onClick={props.onEdit}
+                >
+                  {t('edit')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mcp-danger"
+                  icon={<IconTrashOutlineRegular size={14} />}
+                  disabled={props.busy}
+                  onClick={props.onDelete}
+                >
+                  {t('delete')}
+                </Button>
+              </>
+            ) : (
+              <>
+                <span className="mcp-hint">{t('inheritedNote')}</span>
+                <Button variant="ghost" size="sm" onClick={props.onManageProfile}>
+                  {t('manageInAllWorkspaces')}
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       ) : null}
     </article>
   )
 }
 
-function EmptyState(props: {
-  readonly hiddenCount: number
-  readonly showHidden: boolean
-  readonly t: (key: string) => string
-  readonly onShowHidden: () => void
-  readonly onAdd: () => void
-}): ReactElement {
-  const { t } = props
+function Skeleton(): ReactElement {
   return (
-    <div className="mcp-empty">
-      <span className="mcp-empty-icon">
-        <IconApiOutlineRegular size={28} />
-      </span>
-      <h3>{props.hiddenCount > 0 ? t('noActiveServers') : t('noServersTitle')}</h3>
-      <p>{props.hiddenCount > 0 ? t('noActiveServersBody') : t('noServersBody')}</p>
-      <div className="mcp-empty-actions">
-        {props.hiddenCount > 0 ? (
-          <Button variant="ghost" onClick={props.onShowHidden}>
-            {props.showHidden ? t('hideHidden') : t('showHidden')}
-          </Button>
-        ) : null}
-        <Button variant="primary" icon={<IconPlusOutlineRegular size={14} />} onClick={props.onAdd}>
-          {t('addFirst')}
-        </Button>
-      </div>
+    <div className="mcp-skeleton" aria-hidden="true">
+      <span className="mcp-skeleton-bar" />
+      <span className="mcp-skeleton-bar" />
+      <span className="mcp-skeleton-bar" />
     </div>
   )
 }
@@ -509,9 +576,8 @@ export function McpManagerPage(props: PageProps): ReactElement {
   const data = snapshot.data
   const workspaces = data?.workspaces ?? []
   const [requestedScope, setRequestedScope] = useState('profile')
-  const scope = requestedScope === 'profile' || workspaces.some((entry) => entry.id === requestedScope)
-    ? requestedScope
-    : 'profile'
+  const scope =
+    requestedScope === 'profile' || workspaces.some((entry) => entry.id === requestedScope) ? requestedScope : 'profile'
   const workspace = workspaces.find((entry) => entry.id === scope)
   const target: TargetPayload =
     scope === 'profile' ? { scope: 'profile' } : { scope: 'workspace', workspaceId: workspace?.id ?? '' }
@@ -522,6 +588,7 @@ export function McpManagerPage(props: PageProps): ReactElement {
   const fileError = scope === 'profile' ? data?.profile.error : workspace?.error
 
   const [editor, setEditor] = useState<EditorState | null>(null)
+  const [scopeOpen, setScopeOpen] = useState(false)
   const [showHidden, setShowHidden] = useState<Record<string, boolean>>({})
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [tabs, setTabs] = useState<Record<string, DetailTab>>({})
@@ -531,15 +598,19 @@ export function McpManagerPage(props: PageProps): ReactElement {
   const [authReveals, setAuthReveals] = useState<Record<string, boolean>>({})
   const [attempts, setAttempts] = useState<Record<string, OAuthAttempt>>({})
   const [redirects, setRedirects] = useState<Record<string, string>>({})
-  const [deleteTarget, setDeleteTarget] = useState<{ server: OverviewServer; target: TargetPayload } | null>(null)
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+
+  useEffect(() => props.store.start(), [props.store])
 
   const revealHidden = showHidden[scope] === true
   const rows = scope === 'profile' ? visible : revealHidden ? servers : visible
   const t = props.t
+  const busy = busyKey !== null
 
-  const notify = (text: string, tone?: 'success'): void => {
-    setNotice({ seq: Date.now(), text, ...(tone === undefined ? {} : { tone }) })
+  const notify = (text: string): void => {
+    setNotice({ seq: Date.now(), text })
   }
 
   const run = async (key: string, action: () => Promise<void>): Promise<void> => {
@@ -557,6 +628,7 @@ export function McpManagerPage(props: PageProps): ReactElement {
 
   const changeScope = (next: string): void => {
     setRequestedScope(next)
+    setScopeOpen(false)
     setEditor(null)
     setActionError(null)
   }
@@ -571,46 +643,80 @@ export function McpManagerPage(props: PageProps): ReactElement {
     void run(`${keyOf(server)}:detail`, async () => {
       const result = await props.store.call('detail', { ...target, name: server.name })
       if (!isServerDetail(result)) throw new Error('server detail has an unexpected shape')
-      setEditor({
-        mode: 'edit',
-        previousName: server.name,
-        draft: draftFromDetail(result),
-      })
+      setEditor({ mode: 'edit', previousName: server.name, draft: draftFromDetail(result), detail: result })
     })
   }
 
   const save = (): void => {
-    if (editor === null) return
-    const problem = validateDraft(editor.draft)
-    if (problem !== undefined) {
-      setEditor({ ...editor, error: t(PROBLEM_KEY[problem]) })
-      return
-    }
-    void run('save', async () => {
-      await props.store.call('saveServer', {
-        ...target,
-        server: draftToServer(editor.draft),
-        ...(editor.previousName === undefined ? {} : { previousName: editor.previousName }),
-      })
-      setEditor(null)
-      notify(t('saved'), 'success')
-    })
+    if (editor === null || busyKey !== null) return
+    const draft = editor.draft
+    const previousName = editor.previousName
+    const existing = editor.detail
+    setBusyKey('save')
+    setActionError(null)
+    void (async () => {
+      try {
+        await props.store.call('saveServer', {
+          ...target,
+          server: draftToServer(draft, existing),
+          ...(previousName === undefined ? {} : { previousName }),
+        })
+        setEditor(null)
+        await props.store.refresh()
+        notify(t('saved'))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setEditor((current) => (current === null ? null : { ...current, error: message }))
+      } finally {
+        setBusyKey(null)
+      }
+    })()
+  }
+
+  const runConfirm = (key: string, action: () => Promise<void>, done: () => string): void => {
+    setBusyKey(key)
+    setConfirmError(null)
+    void (async () => {
+      try {
+        await action()
+        setConfirm(null)
+        await props.store.refresh()
+        notify(done())
+      } catch (error) {
+        setConfirmError(error instanceof Error ? error.message : String(error))
+      } finally {
+        setBusyKey(null)
+      }
+    })()
   }
 
   const remove = (): void => {
-    if (deleteTarget === null) return
-    const { server, target: deleteScope } = deleteTarget
-    void run(`${keyOf(server)}:delete`, async () => {
-      await props.store.call('deleteServer', { ...deleteScope, name: server.name })
-      setDeleteTarget(null)
-      notify(t('deleted'), 'success')
-    })
+    if (confirm === null || confirm.kind !== 'delete') return
+    const { server, target: deleteScope } = confirm
+    runConfirm(
+      `${keyOf(server)}:delete`,
+      async () => {
+        await props.store.call('deleteServer', { ...deleteScope, name: server.name })
+      },
+      () => t('deleted'),
+    )
+  }
+
+  const clearToken = (): void => {
+    if (confirm === null || confirm.kind !== 'clearToken') return
+    const { server, target: deleteScope } = confirm
+    runConfirm(
+      `${keyOf(server)}:token`,
+      async () => {
+        await props.store.call('clearToken', { ...deleteScope, name: server.name })
+      },
+      () => t('tokenCleared'),
+    )
   }
 
   const setEnabled = (server: OverviewServer, enabled: boolean): void => {
     void run(`${keyOf(server)}:enabled`, async () => {
       await props.store.call('setEnabled', { ...target, name: server.name, enabled })
-      notify(enabled ? t('enabledNotice') : t('disabledNotice'))
     })
   }
 
@@ -622,10 +728,7 @@ export function McpManagerPage(props: PageProps): ReactElement {
         name: server.name,
         disabled: !enabled,
       })
-      if (!enabled && !revealHidden) {
-        setShowHidden((current) => ({ ...current, [scope]: true }))
-      }
-      notify(enabled ? t('availableHere') : t('hiddenNotice'))
+      if (!enabled && !revealHidden) setShowHidden((current) => ({ ...current, [scope]: true }))
     })
   }
 
@@ -635,14 +738,7 @@ export function McpManagerPage(props: PageProps): ReactElement {
       await props.store.call('setToken', { ...target, name: server.name, value: (tokenValues[key] ?? '').trim() })
       setTokenValues((current) => ({ ...current, [key]: '' }))
       setAuthReveals((current) => ({ ...current, [key]: false }))
-      notify(t('tokenSaved'), 'success')
-    })
-  }
-
-  const clearToken = (server: OverviewServer): void => {
-    void run(`${keyOf(server)}:token`, async () => {
-      await props.store.call('clearToken', { ...target, name: server.name })
-      notify(t('tokenCleared'))
+      notify(t('tokenSaved'))
     })
   }
 
@@ -659,6 +755,9 @@ export function McpManagerPage(props: PageProps): ReactElement {
             ...current,
             [key]: { attemptId: result.attemptId as string, url: result.authorizationUrl as string },
           }))
+        } else if (isRecord(result) && result.authorized === true) {
+          popup?.close()
+          notify(t('signedIn'))
         } else {
           popup?.close()
         }
@@ -667,6 +766,13 @@ export function McpManagerPage(props: PageProps): ReactElement {
         throw error
       }
     })
+  }
+
+  const reopenSignIn = (server: OverviewServer): void => {
+    const key = keyOf(server)
+    const url = attempts[key]?.url ?? server.oauthUrl
+    if (url === undefined) return
+    window.open(url, '_blank', 'noopener')
   }
 
   const completeSignIn = (server: OverviewServer): void => {
@@ -686,7 +792,7 @@ export function McpManagerPage(props: PageProps): ReactElement {
         return next
       })
       setRedirects((current) => ({ ...current, [key]: '' }))
-      notify(t('signedIn'), 'success')
+      notify(t('signedIn'))
     })
   }
 
@@ -722,7 +828,6 @@ export function McpManagerPage(props: PageProps): ReactElement {
     return {
       server,
       own,
-      target,
       expanded: expanded[key] === true,
       tab: tabs[key] ?? 'tools',
       busy: busyKey !== null && busyKey.startsWith(`${key}:`),
@@ -733,7 +838,10 @@ export function McpManagerPage(props: PageProps): ReactElement {
       t,
       onToggle: () => toggleExpanded(server),
       onEdit: () => openEdit(server),
-      onDelete: () => setDeleteTarget({ server, target }),
+      onDelete: () => {
+        setConfirmError(null)
+        setConfirm({ kind: 'delete', server, target })
+      },
       onManageProfile: () => {
         changeScope('profile')
         setExpanded((current) => ({ ...current, [key]: true }))
@@ -742,109 +850,187 @@ export function McpManagerPage(props: PageProps): ReactElement {
       onSetToken: () => {
         setExpanded((current) => ({ ...current, [key]: true }))
         setAuthReveals((current) => ({ ...current, [key]: true }))
-        window.setTimeout(() => document.getElementById(`mcp-token-${server.name}`)?.focus(), 0)
       },
       onTokenValue: (value) => {
         if (server.authKind === 'oauth') setRedirects((current) => ({ ...current, [key]: value }))
         else setTokenValues((current) => ({ ...current, [key]: value }))
       },
       onSaveToken: () => saveToken(server),
-      onClearToken: () => clearToken(server),
+      onClearToken: () => {
+        setConfirmError(null)
+        setConfirm({ kind: 'clearToken', server, target })
+      },
       onSignIn: () => signIn(server),
+      onReopenSignIn: () => reopenSignIn(server),
       onCompleteSignIn: () => completeSignIn(server),
       onCancelSignIn: () => cancelSignIn(server),
       onSignOut: () => signOut(server),
-      onAuthReveal: (reveal) => setAuthReveals((current) => ({ ...current, [key]: reveal })),
+      onAuthReveal: (reveal) => {
+        setAuthReveals((current) => ({ ...current, [key]: reveal }))
+        if (!reveal) setTokenValues((current) => ({ ...current, [key]: '' }))
+      },
       onTab: (tab) => setTabs((current) => ({ ...current, [key]: tab })),
-      onRetry: () => void run(`${key}:retry`, async () => { await props.store.reconnect() }),
+      onRetry: () => {
+        const retryTarget: TargetPayload = own ? target : { scope: 'profile' }
+        void run(`${key}:retry`, async () => {
+          await props.store.call('reconnectServer', { ...retryTarget, name: server.name })
+        })
+      },
     }
   }
 
-  const error = actionError ?? snapshot.error ?? fileError
-  const scopeHint = scope === 'profile' ? t('scopeHintProfile') : t('scopeHintWorkspace')
-  const busy = busyKey !== null
+  const error = actionError ?? snapshot.error
+  const unavailable = data === undefined
+  const showError = (error !== null && error !== undefined) || (unavailable && !snapshot.loading)
+  const scopeNote = scope === 'profile' ? t('profileNote') : t('workspaceNote')
+  const loading = snapshot.loading && data === undefined
+  const profileCount = data?.profile.servers.filter((server) => server.hidden !== true).length ?? 0
+  const currentScopeTitle = scope === 'profile' ? t('allWorkspaces') : (workspace?.title ?? t('allWorkspaces'))
+  const currentScopeCount =
+    scope === 'profile'
+      ? profileCount
+      : (workspace?.servers.filter((server) => server.hidden !== true).length ?? 0)
+  const scopeItems: MenuEntry[] = [
+    {
+      id: 'profile',
+      label: (
+        <span className="mcp-menu-row">
+          <span className="mcp-menu-name">{t('allWorkspaces')}</span>
+          <span className="mcp-menu-count">{profileCount}</span>
+        </span>
+      ),
+    },
+    ...(workspaces.length === 0
+      ? []
+      : [{ type: 'label' as const, id: 'mcp-workspaces-label', text: t('workspaces') }]),
+    ...workspaces.map((entry) => ({
+      id: entry.id,
+      label: (
+        <span className="mcp-menu-row">
+          <span className="mcp-menu-name">{entry.title}</span>
+          <span className="mcp-menu-count">
+            {entry.servers.filter((server) => server.hidden !== true).length}
+          </span>
+        </span>
+      ),
+    })),
+  ]
 
   return (
-    <div className="mcp">
-      <header className="mcp-head">
-        <div className="mcp-head-copy">
-          <h2 className="mcp-title">{t('title')}</h2>
-          <p className="mcp-lede">{t('description')}</p>
-        </div>
-        <div className="mcp-actions">
+    <section className="mcp" aria-label={t('title')}>
+      <h2 className="mcp-visually-hidden">{t('title')}</h2>
+      <header className="mcp-toolbar">
+        <Menu
+          open={scopeOpen}
+          onClose={() => setScopeOpen(false)}
+          onSelect={(id) => changeScope(id)}
+          selectedId={scope}
+          items={scopeItems}
+          autoFocus
+          align="start"
+          portal
+          minWidthFromAnchor
+          className="mcp-scope-menu"
+          anchor={
+            <Button
+              variant="outline"
+              className="mcp-scope-trigger"
+              aria-haspopup="menu"
+              aria-expanded={scopeOpen}
+              aria-label={`${t('scope')}: ${currentScopeTitle}`}
+              onClick={() => setScopeOpen(!scopeOpen)}
+            >
+              <span className="mcp-scope-label">{currentScopeTitle}</span>
+              <span className="mcp-scope-count">{currentScopeCount}</span>
+              <IconChevronDownOutlineRegular size={14} />
+            </Button>
+          }
+        />
+        <Button className="mcp-add" variant="primary" icon={<IconPlusOutlineRegular size={14} />} onClick={openAdd}>
+          {t('addServer')}
+        </Button>
+      </header>
+
+      <div className="mcp-subbar">
+        <span className="mcp-scope-note">{scopeNote}</span>
+        <div className="mcp-subactions">
           <Button
             variant="ghost"
+            size="sm"
             icon={<IconRefreshOutlineRegular size={14} />}
             onClick={() => void props.store.refresh()}
           >
             {t('refresh')}
           </Button>
-          <Button variant="ghost" onClick={() => void props.store.reconnect()} disabled={busy}>
-            {t('retry')}
-          </Button>
-          <Button variant="primary" icon={<IconPlusOutlineRegular size={14} />} onClick={openAdd}>
-            {t('addServer')}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              void run('reconnect', async () => {
+                await props.store.call('reconnect', {})
+              })
+            }
+            disabled={busy}
+          >
+            {t('reconnectAll')}
           </Button>
         </div>
-      </header>
-
-      <div className="mcp-scopebar">
-        <div className="mcp-scopes" role="tablist" aria-label={t('title')}>
-          <Pill active={scope === 'profile'} onClick={() => changeScope('profile')}>
-            {t('profile')}
-            <span className="mcp-scope-count">{data?.profile.servers.length ?? 0}</span>
-          </Pill>
-          {workspaces.map((entry) => (
-            <Pill key={entry.id} active={scope === entry.id} onClick={() => changeScope(entry.id)}>
-              {entry.title}
-              <span className="mcp-scope-count">
-                {entry.servers.filter((server) => server.hidden !== true).length}
-              </span>
-            </Pill>
-          ))}
-        </div>
-        <span className="mcp-scope-note">{scopeHint}</span>
       </div>
 
-      {error === undefined || error === null ? null : (
-        <p className="mcp-banner" role="alert">
-          {error}
-        </p>
+      {showError ? (
+        <div className="mcp-banner" role="alert">
+          <span>{error ?? t('loadError')}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setActionError(null)
+              void props.store.refresh()
+            }}
+          >
+            {t('retry')}
+          </Button>
+        </div>
+      ) : null}
+      {fileError === undefined || fileError === null ? null : (
+        <div className="mcp-banner" role="alert">
+          <span>{fileError}</span>
+        </div>
       )}
 
-      {editor === null ? null : (
-        <Editor
-          mode={editor.mode}
-          draft={editor.draft}
-          scopeLabel={scope === 'profile' ? t('profile') : (workspace?.title ?? t('workspace'))}
-          error={editor.error}
-          busy={busyKey === 'save'}
-          onChange={(draft) => setEditor({ ...editor, draft, error: undefined })}
-          onSave={save}
-          onCancel={() => setEditor(null)}
-          t={t}
-        />
-      )}
-
-      {snapshot.loading && data === undefined ? (
-        <p className="mcp-muted">{t('loadError')}</p>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          hiddenCount={hiddenCount}
-          showHidden={revealHidden}
-          t={t}
-          onShowHidden={() => setShowHidden((current) => ({ ...current, [scope]: !revealHidden }))}
-          onAdd={openAdd}
-        />
+      {loading ? (
+        <div className="mcp-list" aria-busy="true">
+          <span className="mcp-visually-hidden" role="status">
+            {t('loading')}
+          </span>
+          <Skeleton />
+          <Skeleton />
+          <Skeleton />
+        </div>
+      ) : unavailable ? null : rows.length === 0 ? (
+        <div className="mcp-empty">
+          <h3>{hiddenCount > 0 ? t('noActiveServers') : t('noServersTitle')}</h3>
+          <p>{hiddenCount > 0 ? t('noActiveServersBody') : t('noServersBody')}</p>
+          <div className="mcp-empty-actions">
+            {hiddenCount > 0 ? (
+              <Button variant="ghost" onClick={() => setShowHidden((current) => ({ ...current, [scope]: true }))}>
+                {t('showHidden')}
+              </Button>
+            ) : null}
+            <Button variant="primary" icon={<IconPlusOutlineRegular size={14} />} onClick={openAdd}>
+              {t('addServer')}
+            </Button>
+          </div>
+        </div>
       ) : (
         <div className="mcp-list">
           {rows.map((server) => (
-            <ServerRow key={`${server.name}:${server.origin ?? 'profile'}`} {...rowProps(server)} />
+            <ServerCard key={`${server.name}:${server.origin ?? 'profile'}`} {...rowProps(server)} />
           ))}
-          {hiddenCount > 0 && visible.length > 0 ? (
+          {hiddenCount > 0 ? (
             <div className="mcp-hidden-row">
               <span className="mcp-muted">
-                {hiddenCount + ' ' + t('hiddenSummary')}
+                {hiddenCount} {t('hiddenSummary')}
               </span>
               <Button
                 variant="ghost"
@@ -858,45 +1044,100 @@ export function McpManagerPage(props: PageProps): ReactElement {
         </div>
       )}
 
-      <footer className="mcp-foot">
-        {path === '' ? null : <PathLabel path={path} className="mcp-path" />}
-        {snapshot.updatedAt === undefined ? null : (
-          <span className="mcp-updated">
-            {t('updated')} {new Date(snapshot.updatedAt).toLocaleTimeString()}
-          </span>
-        )}
-      </footer>
+      {path === '' ? null : (
+        <footer className="mcp-foot">
+          <span className="mcp-foot-label">{t('configFile')}</span>
+          <PathLabel path={path} className="mcp-path" />
+        </footer>
+      )}
 
       <Modal
-        open={deleteTarget !== null}
-        onClose={() => setDeleteTarget(null)}
-        title={t('deleteServerTitle')}
+        open={editor !== null}
+        onClose={() => {
+          if (busyKey !== 'save') setEditor(null)
+        }}
+        title={editor?.mode === 'edit' ? t('editTitle') : t('addTitle')}
+        description={
+          editor === null
+            ? undefined
+            : (editor.mode === 'add' ? t('addingTo') : t('editingIn')) +
+              ' ' +
+              (scope === 'profile' ? t('allWorkspaces') : (workspace?.title ?? t('scope')))
+        }
         closeLabel={t('close')}
+        className="mcp-modal"
+        contentClassName="mcp-modal-content"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+            <Button variant="ghost" onClick={() => setEditor(null)} disabled={busyKey === 'save'}>
               {t('cancel')}
             </Button>
-            <Button variant="primary" onClick={remove} disabled={busy}>
-              {t('delete')}
+            <Button
+              variant="primary"
+              type="submit"
+              form="mcp-server-form"
+              disabled={busyKey === 'save'}
+            >
+              {busyKey === 'save' ? t('saving') : editor?.mode === 'edit' ? t('save') : t('addServer')}
             </Button>
           </>
         }
       >
-        <p className="mcp-modal-body">
-          {t('deleteBody')}
-          {deleteTarget === null ? null : <strong> {deleteTarget.server.name}</strong>}
-        </p>
+        {editor === null ? null : (
+          <Editor
+            key={`${editor.mode}:${editor.previousName ?? ''}`}
+            mode={editor.mode}
+            draft={editor.draft}
+            existingNames={servers
+              .filter((server) => server.name !== editor.previousName)
+              .map((server) => server.name)}
+            {...(editor.error === undefined ? {} : { error: editor.error })}
+            onChange={(draft) => setEditor({ ...editor, draft, error: undefined })}
+            onSave={save}
+            t={t}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        open={confirm !== null}
+        onClose={() => setConfirm(null)}
+        title={confirm?.kind === 'clearToken' ? t('clearTokenTitle') : t('deleteServerTitle')}
+        closeLabel={t('close')}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirm(null)}>
+              {t('cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={confirm?.kind === 'clearToken' ? clearToken : remove}
+              disabled={busy}
+            >
+              {confirm?.kind === 'clearToken' ? t('confirmClearToken') : t('delete')}
+            </Button>
+          </>
+        }
+      >
+        <div className="mcp-confirm">
+          <IconWarningOutlineRegular size={16} />
+          <div>
+            <p className="mcp-modal-name">{confirm?.server.name}</p>
+            <p className="mcp-modal-body">
+              {confirm?.kind === 'clearToken' ? t('clearTokenBody') : t('deleteBody')}
+            </p>
+            {confirmError === null ? null : (
+              <p className="mcp-form-error" role="alert">
+                {confirmError}
+              </p>
+            )}
+          </div>
+        </div>
       </Modal>
 
       {notice === null ? null : (
-        <Toast
-          key={notice.seq}
-          text={notice.text}
-          {...(notice.tone === undefined ? {} : { tone: notice.tone })}
-          onDone={() => setNotice(null)}
-        />
+        <Toast key={notice.seq} text={notice.text} tone="success" onDone={() => setNotice(null)} />
       )}
-    </div>
+    </section>
   )
 }

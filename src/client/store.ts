@@ -6,12 +6,13 @@ export interface Snapshot {
   readonly loading: boolean
   readonly data?: OverviewData
   readonly error?: string
-  readonly updatedAt?: number
 }
 
 export interface RpcCaller {
   call(route: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<RpcOutcome>
 }
+
+const POLL_MS = 4000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -84,12 +85,19 @@ export class OverviewStore {
     for (const listener of this.listeners) listener()
   }
 
+  /** Poll while the settings section is mounted. The caller owns the returned disposer. */
   start(): () => void {
+    if (this.timer !== undefined) return () => this.stop()
     void this.refresh()
     this.timer = setInterval(() => {
-      void this.refresh()
-    }, 2000)
+      if (!document.hidden) void this.refresh()
+    }, POLL_MS)
+    document.addEventListener('visibilitychange', this.onVisibility)
     return () => this.stop()
+  }
+
+  private readonly onVisibility = (): void => {
+    if (!document.hidden) void this.refresh()
   }
 
   stop(): void {
@@ -97,6 +105,7 @@ export class OverviewStore {
       clearInterval(this.timer)
       this.timer = undefined
     }
+    document.removeEventListener('visibilitychange', this.onVisibility)
     this.controller?.abort()
     this.controller = undefined
   }
@@ -117,16 +126,31 @@ export class OverviewStore {
     this.controller?.abort()
     const controller = new AbortController()
     this.controller = controller
-    const outcome = await this.rpc.call('/api', 'mcp-manager.overview', {}, controller.signal)
+    let outcome: RpcOutcome
+    try {
+      outcome = await this.rpc.call('/api', 'mcp-manager.overview', {}, controller.signal)
+    } catch (error) {
+      if (controller.signal.aborted) return
+      this.publish({
+        loading: false,
+        error: error instanceof Error ? error.message : String(error),
+        ...(this.snapshot.data === undefined ? {} : { data: this.snapshot.data }),
+      })
+      return
+    }
     if (controller.signal.aborted) return
     if (!outcome.ok) {
-      this.publish({ loading: false, error: outcome.error.message, ...(this.snapshot.data === undefined ? {} : { data: this.snapshot.data }) })
+      this.publish({
+        loading: false,
+        error: outcome.error.message,
+        ...(this.snapshot.data === undefined ? {} : { data: this.snapshot.data }),
+      })
       return
     }
     if (!isOverview(outcome.value)) {
       this.publish({ loading: false, error: 'overview response has an unexpected shape' })
       return
     }
-    this.publish({ loading: false, data: outcome.value, updatedAt: Date.now() })
+    this.publish({ loading: false, data: outcome.value })
   }
 }
