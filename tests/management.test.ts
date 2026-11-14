@@ -135,6 +135,78 @@ test('AC-015: save, enable, and delete a profile server through RPC', async () =
   }
 })
 
+
+test('AC-016: hiding a profile server in a workspace writes the override and marks it hidden', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mcp-manager-workspace-'))
+  const routes = new Map<string, ConnectionFetchRoute>()
+  const store = new ConfigStore(join(dir, 'profile.json'))
+  const manager = new ConnectionManager(makeCtx(new ToolRegistry()), undefined)
+  const workspaceDir = join(dir, 'workspace')
+  try {
+    await store.writeProfile({
+      version: 1,
+      servers: [
+        {
+          name: 'notion',
+          transport: 'streamable-http',
+          url: 'https://mcp.notion.com/mcp',
+          auth: { kind: 'oauth' },
+          disabled: false,
+          toolPolicy: {},
+        },
+      ],
+    })
+    await store.writeWorkspace(workspaceDir, { version: 1, servers: [] })
+    registerRpc(rpcContext(routes), {
+      store,
+      manager,
+      workspaces: { list: () => [{ id: 'ws-1', title: 'One', path: workspaceDir }] },
+      profile: () => ({ version: 1, servers: [] }),
+      credentials: new MemoryCredentials(),
+      oauth: undefined,
+      reloadProfile: async () => undefined,
+      reattachWorkspace: async () => undefined,
+    })
+
+    const hidden = await callRoute(routes, 'setWorkspaceDisabled', {
+      workspaceId: 'ws-1',
+      name: 'notion',
+      disabled: true,
+    })
+    assert.equal(hidden.ok, true)
+    const written: unknown = JSON.parse(await readFile(join(workspaceDir, '.dsh', 'mcp.json'), 'utf8'))
+    assert.ok(isRecord(written))
+    assert.ok(isRecord(written.dsh))
+    assert.deepEqual(written.dsh.disableProfileServers, ['notion'])
+
+    const overview = await callRoute(routes, 'overview', {})
+    assert.equal(overview.ok, true)
+    assert.ok(isRecord(overview.value))
+    const list = overview.value.workspaces
+    assert.ok(Array.isArray(list))
+    const workspace = list[0]
+    assert.ok(isRecord(workspace))
+    const servers = workspace.servers
+    assert.ok(Array.isArray(servers))
+    const entry = servers.find((server) => isRecord(server) && server.name === 'notion')
+    assert.ok(isRecord(entry))
+    assert.equal(entry.hidden, true)
+
+    const visible = await callRoute(routes, 'setWorkspaceDisabled', {
+      workspaceId: 'ws-1',
+      name: 'notion',
+      disabled: false,
+    })
+    assert.equal(visible.ok, true)
+    const after: unknown = JSON.parse(await readFile(join(workspaceDir, '.dsh', 'mcp.json'), 'utf8'))
+    assert.ok(isRecord(after))
+    assert.equal(after.dsh, undefined)
+  } finally {
+    await manager.dispose()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('AC-013: setToken stores a credential record and never returns the value', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mcp-manager-token-'))
   const routes = new Map<string, ConnectionFetchRoute>()

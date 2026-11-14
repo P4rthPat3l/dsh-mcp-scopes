@@ -1,13 +1,14 @@
 /** Client half: one Settings section and its styles. */
 
 import type { ReactElement } from 'react'
+import { IconApiOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { McpManagerPage, type PageProps } from './page.js'
 import { OverviewStore } from './store.js'
 import { CSS } from './styles.js'
 import { NS, en, zh } from './locale.js'
 import type { ClientContext, ConnectionService, LocaleService } from './harness.js'
 
-export const inject = ['slots']
+export const inject = ['slots', 'locale']
 
 function isConnection(value: unknown): value is ConnectionService {
   if (typeof value !== 'object' || value === null) return false
@@ -17,15 +18,7 @@ function isConnection(value: unknown): value is ConnectionService {
 }
 
 function SectionIcon(): ReactElement {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <rect x="2.5" y="2.5" width="11" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.2" />
-      <rect x="2.5" y="9.5" width="11" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.2" />
-      <circle cx="5" cy="4.5" r="0.8" fill="currentColor" />
-      <circle cx="5" cy="11.5" r="0.8" fill="currentColor" />
-      <path d="M10 4.5h1.6M10 11.5h1.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  )
+  return <IconApiOutlineRegular size={16} />
 }
 
 function isLocale(value: unknown): value is LocaleService {
@@ -35,9 +28,14 @@ function isLocale(value: unknown): value is LocaleService {
 }
 
 export function apply(ctx: ClientContext): void {
-  const locale = ctx.get('locale')
-  if (isLocale(locale)) {
-    ctx.effect(() => locale.register(NS, { en, zh }), 'dsh-mcp-manager: copy')
+  const localeValue = ctx.get('locale')
+  const locale = isLocale(localeValue) ? localeValue : undefined
+  if (locale !== undefined) {
+    try {
+      locale.register(NS, { en, zh })
+    } catch (error) {
+      console.error('dsh-mcp-manager: locale registration failed', error)
+    }
   }
   ctx.effect(() => {
     const style = document.createElement('style')
@@ -52,7 +50,7 @@ export function apply(ctx: ClientContext): void {
   const connection = ctx.get('connection')
   if (!isConnection(connection)) return
   const store = new OverviewStore(connection.rpc)
-  const t = isLocale(locale) ? locale.bind(NS) : (key: string): string => key
+  const t = locale === undefined ? (key: string): string => key : locale.bind(NS)
   const surface = (): PageProps => ({ store, t })
 
   ctx.effect(() => store.start(), 'dsh-mcp-manager: overview polling')

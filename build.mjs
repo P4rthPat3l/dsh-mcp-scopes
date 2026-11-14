@@ -11,6 +11,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
 const ID = 'dsh-mcp-manager'
 const externals = ['@modelcontextprotocol/client', '@modelcontextprotocol/client/*', '@deepseek-ai/*']
+const clientExternals = ['react', 'react-dom', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives']
 
 await mkdir('.build', { recursive: true })
 await mkdir('lib', { recursive: true })
@@ -31,7 +32,7 @@ await build({
   format: 'cjs',
   platform: 'browser',
   target: 'es2022',
-  external: ['react', 'react-dom', 'react/jsx-runtime'],
+  external: clientExternals,
   define: { 'process.env.NODE_ENV': '"production"' },
   minify: true,
   outfile: '.build/client.cjs',

@@ -29,6 +29,7 @@ export const ENDPOINTS = [
   'saveServer',
   'deleteServer',
   'setEnabled',
+  'setWorkspaceDisabled',
   'setToken',
   'clearToken',
   'setToolPolicy',
@@ -170,6 +171,7 @@ async function viewFor(
   def: ServerDef,
   scope: ScopeKind,
   workspaceDir: string | undefined,
+  hidden = false,
 ): Promise<ServerView> {
   const entry = deps.manager.find(scope, workspaceDir, def.name)
   const base = entry === undefined ? idleView(def) : deps.manager.view(entry)
@@ -180,6 +182,7 @@ async function viewFor(
   return {
     ...base,
     origin: scope,
+    ...(hidden ? { hidden: true } : {}),
     authConfigured: await configured(deps, scope, workspaceDir, def),
     ...(base.error === undefined && oauthMessage !== undefined ? { error: oauthMessage } : {}),
   }
@@ -197,6 +200,14 @@ async function overview(deps: RpcDeps): Promise<OverviewResult> {
     const servers: ServerView[] = []
     for (const item of effective) {
       servers.push(await viewFor(deps, item.def, item.scope, item.scope === 'workspace' ? workspace.path : undefined))
+    }
+    if (read.error === undefined && file.missing === false) {
+      const hidden = new Set(file.file.disableProfileServers ?? [])
+      const shadowed = new Set(file.file.servers.map((def) => def.name))
+      for (const def of profile.servers) {
+        if (!hidden.has(def.name) || shadowed.has(def.name)) continue
+        servers.push(await viewFor(deps, def, 'profile', undefined, true))
+      }
     }
     workspaces.push({
       id: workspace.id,
@@ -266,6 +277,26 @@ async function setEnabled(deps: RpcDeps, payload: unknown): Promise<{ ok: true }
   if (server === undefined) throw new BadRequest(`no server named ${name} in this scope`)
   await writeFile(deps, target, withServer(file, { ...server, disabled: !enabled }))
   await reconcile(deps, target)
+  return { ok: true }
+}
+
+async function setWorkspaceDisabled(deps: RpcDeps, payload: unknown): Promise<{ ok: true }> {
+  const fields = requireRecord(payload)
+  const workspaceId = requireString(fields, 'workspaceId')
+  const name = requireString(fields, 'name')
+  const disabled = fields.disabled
+  if (typeof disabled !== 'boolean') throw new BadRequest('payload.disabled must be a boolean')
+  const workspace = deps.workspaces?.list().find((entry) => entry.id === workspaceId)
+  if (workspace === undefined) throw new BadRequest('unknown workspace')
+  const read = await deps.store.readWorkspace(workspace.path)
+  const current = new Set(read.file.disableProfileServers ?? [])
+  if (disabled) current.add(name)
+  else current.delete(name)
+  await deps.store.writeWorkspace(workspace.path, {
+    ...read.file,
+    disableProfileServers: [...current],
+  })
+  await deps.reattachWorkspace(workspace.path)
   return { ok: true }
 }
 
@@ -385,6 +416,8 @@ async function dispatch(deps: RpcDeps, endpoint: RpcEndpoint, payload: unknown):
       return deleteServer(deps, payload)
     case 'setEnabled':
       return setEnabled(deps, payload)
+    case 'setWorkspaceDisabled':
+      return setWorkspaceDisabled(deps, payload)
     case 'setToolPolicy':
       return setToolPolicy(deps, payload)
     case 'setToken':

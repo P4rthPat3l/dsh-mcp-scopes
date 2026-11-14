@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import { Client, UnauthorizedError } from '@modelcontextprotocol/client'
-import type { CallToolResult, OAuthClientProvider, Tool, Transport } from '@modelcontextprotocol/client'
+import type { CallToolResult, OAuthClientProvider, Prompt, Resource, Tool, Transport } from '@modelcontextprotocol/client'
 import { resolveBearer } from './credentials.js'
 import { buildToolDefinition } from './naming.js'
 import { createTransport } from './transport.js'
@@ -42,6 +42,8 @@ export interface Entry {
   status: ConnectionStatus
   error?: string
   rawTools: Tool[]
+  rawResources: Resource[]
+  rawPrompts: Prompt[]
   definitions: ToolDefinition[]
   instructions: string
   logs: LogLine[]
@@ -115,6 +117,8 @@ export class ConnectionManager {
       def,
       status: def.disabled === true ? 'disabled' : 'idle',
       rawTools: [],
+      rawResources: [],
+      rawPrompts: [],
       definitions: [],
       instructions: '',
       logs: [],
@@ -216,6 +220,8 @@ export class ConnectionManager {
       void client.close().catch(() => undefined)
     }
     entry.rawTools = []
+    entry.rawResources = []
+    entry.rawPrompts = []
     entry.definitions = []
     entry.instructions = ''
   }
@@ -303,10 +309,27 @@ export class ConnectionManager {
         throw new Error(`server instructions exceed ${MAX_INSTRUCTION_BYTES} bytes`)
       }
 
+      const capabilities = client.getServerCapabilities()
       const rawTools: Tool[] =
-        client.getServerCapabilities()?.tools === undefined
+        capabilities?.tools === undefined
           ? []
           : (await client.listTools(undefined, { cacheMode: 'refresh' })).tools
+      let rawResources: Resource[] = []
+      if (capabilities?.resources !== undefined) {
+        try {
+          rawResources = (await client.listResources()).resources
+        } catch (error) {
+          this.log(entry, 'warn', `resource discovery failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      let rawPrompts: Prompt[] = []
+      if (capabilities?.prompts !== undefined) {
+        try {
+          rawPrompts = (await client.listPrompts()).prompts
+        } catch (error) {
+          this.log(entry, 'warn', `prompt discovery failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
       const timeoutMs = def.timeouts?.callMs ?? DEFAULT_CALL_TIMEOUT_MS
       const definitions: ToolDefinition[] = []
       const seen = new Set<string>()
@@ -323,6 +346,8 @@ export class ConnectionManager {
         owner.disposers = []
       }
       entry.rawTools = rawTools
+      entry.rawResources = rawResources
+      entry.rawPrompts = rawPrompts
       entry.definitions = definitions
       entry.instructions = instructions
       entry.retries = 0
@@ -336,6 +361,8 @@ export class ConnectionManager {
         if (client !== undefined) void client.close().catch(() => undefined)
       }
       entry.rawTools = []
+      entry.rawResources = []
+      entry.rawPrompts = []
       entry.definitions = []
       for (const owner of entry.owners.values()) {
         for (const dispose of owner.disposers) dispose()
@@ -437,6 +464,20 @@ export class ConnectionManager {
       ...(entry.oauthAttemptId === undefined ? {} : { oauthAttemptId: entry.oauthAttemptId }),
       toolCount: entry.definitions.length,
       tools: entry.definitions.map((definition) => definition.name),
+      toolDetails: entry.rawTools
+        .filter((tool) => toolAllowed(entry.def.toolPolicy, tool.name))
+        .map((tool) => ({ name: tool.name, description: tool.description ?? '' })),
+      resources: entry.rawResources.map((resource) => ({
+        uri: resource.uri,
+        name: resource.name,
+        ...(resource.mimeType === undefined ? {} : { mimeType: resource.mimeType }),
+      })),
+      prompts: entry.rawPrompts.map((prompt) => ({
+        name: prompt.name,
+        description: prompt.description ?? '',
+        arguments: (prompt.arguments ?? []).map((argument) => argument.name),
+      })),
+      instructions: entry.instructions,
       ...(entry.error === undefined ? {} : { error: entry.error }),
       logs: [...entry.logs],
     }
@@ -474,6 +515,10 @@ export function idleView(def: ServerDef): ServerView {
     status: def.disabled === true ? 'disabled' : 'idle',
     toolCount: 0,
     tools: [],
+    toolDetails: [],
+    resources: [],
+    prompts: [],
+    instructions: '',
     logs: [],
   }
 }

@@ -24,7 +24,7 @@
   "scripts": {
     "bundle": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node build.mjs && tsc --noEmit && node --import tsx --test tests/*.test.ts tests/*.test.tsx"
+    "test": "node build.mjs && tsc --noEmit && node --import tsx --import ./tests/register-primitives.mjs --test tests/*.test.ts tests/*.test.tsx"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.2.0"

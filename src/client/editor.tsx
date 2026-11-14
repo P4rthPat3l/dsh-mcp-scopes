@@ -1,34 +1,38 @@
-/** Add or edit one server. */
+/** Draft conversion and the add/edit form, built from Harness primitives. */
 
-import type { ReactElement, ReactNode } from 'react'
+import { useState, type ReactElement } from 'react'
+import {
+  Button,
+  Checkbox,
+  Input,
+  SegmentedControl,
+  Tag,
+  IconCloseOutlineRegular,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ServerDetail } from './harness.js'
+import type { AuthConfig, ServerDef } from '../host/types.js'
+
+export type DraftTransport = 'auto' | 'stdio' | 'streamable-http'
+export type DraftAuth = 'none' | 'bearer' | 'oauth'
 
 export interface Draft {
-  name: string
-  transport: 'stdio' | 'streamable-http'
-  url: string
-  command: string
-  args: string
-  cwd: string
-  headers: string
-  env: string
-  authKind: 'none' | 'bearer' | 'oauth'
-  credential: string
-  scopes: string
-  allow: string
-  deny: string
-  enabled: boolean
+  readonly connection: string
+  readonly name: string
+  readonly transport: DraftTransport
+  readonly headers: string
+  readonly authKind: DraftAuth
+  readonly credential: string
+  readonly scopes: string
+  readonly allow: string
+  readonly deny: string
+  readonly enabled: boolean
 }
 
 export const EMPTY_DRAFT: Draft = {
+  connection: '',
   name: '',
-  transport: 'streamable-http',
-  url: '',
-  command: '',
-  args: '',
-  cwd: '',
+  transport: 'auto',
   headers: '',
-  env: '',
   authKind: 'none',
   credential: '',
   scopes: '',
@@ -37,332 +41,333 @@ export const EMPTY_DRAFT: Draft = {
   enabled: true,
 }
 
-function linesToRecord(text: string): Record<string, string> {
+export type DraftProblem = 'name' | 'connection' | 'url'
+export type SaveProblem = DraftProblem | 'save'
+
+const NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
+
+export function resolvedTransport(draft: Draft): 'stdio' | 'streamable-http' {
+  if (draft.transport !== 'auto') return draft.transport
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(draft.connection.trim()) ? 'streamable-http' : 'stdio'
+}
+
+function splitCommand(value: string): { command: string; args: string[] } {
+  const parts = value.trim().split(/\s+/).filter((part) => part !== '')
+  return { command: parts[0] ?? '', args: parts.slice(1) }
+}
+
+function parsePairs(text: string, separator: ':' | '='): Record<string, string> {
   const out: Record<string, string> = {}
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (trimmed === '') continue
-    const colon = trimmed.indexOf(':')
-    const equals = trimmed.indexOf('=')
-    let split = -1
-    if (colon >= 0 && (equals < 0 || colon < equals)) split = colon
-    else if (equals >= 0) split = equals
-    if (split <= 0) continue
-    const key = trimmed.slice(0, split).trim()
-    const value = trimmed.slice(split + 1).trim()
+    const index = trimmed.indexOf(separator)
+    if (index <= 0) continue
+    const key = trimmed.slice(0, index).trim()
+    const value = trimmed.slice(index + 1).trim()
     if (key !== '') out[key] = value
   }
   return out
 }
 
-function recordToLines(record: Readonly<Record<string, string>> | undefined): string {
-  if (record === undefined) return ''
-  return Object.entries(record)
-    .map(([key, value]) => `${key}: ${value}`)
-    .join('\n')
+function formatPairs(record: Readonly<Record<string, string>>, separator: ':' | '='): string {
+  const joiner = separator === ':' ? ': ' : '='
+  return Object.entries(record).map(([key, value]) => `${key}${joiner}${value}`).join('\n')
 }
 
-function splitWords(text: string): string[] {
-  return text.split(/\s+/).filter((part) => part !== '')
-}
-
-function splitList(text: string): string[] {
+function listOf(text: string): string[] {
   return text
-    .split(/[\s,]+/)
+    .split(/[,\s]+/)
     .map((part) => part.trim())
     .filter((part) => part !== '')
 }
 
-export function draftFromDetail(detail: ServerDetail): Draft {
+function authFor(draft: Draft): AuthConfig {
+  if (draft.authKind === 'none') return { kind: 'none' }
+  if (draft.authKind === 'bearer') {
+    const credential = draft.credential.trim()
+    return credential === '' ? { kind: 'bearer' } : { kind: 'bearer', credential }
+  }
+  const scopes = listOf(draft.scopes)
+  return { kind: 'oauth', ...(scopes.length === 0 ? {} : { scopes }) }
+}
+
+/** Validate a draft before it becomes a server definition. */
+export function validateDraft(draft: Draft): DraftProblem | undefined {
+  if (!NAME_PATTERN.test(draft.name.trim())) return 'name'
+  if (draft.connection.trim() === '') return 'connection'
+  if (resolvedTransport(draft) === 'streamable-http') {
+    try {
+      const url = new URL(draft.connection.trim())
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return 'url'
+    } catch {
+      return 'url'
+    }
+  }
+  return undefined
+}
+
+/** Build the internal server definition from a validated draft. */
+export function draftToServer(draft: Draft): ServerDef {
+  const name = draft.name.trim()
+  const transport = resolvedTransport(draft)
+  const allow = listOf(draft.allow)
+  const deny = listOf(draft.deny)
+  const base = {
+    name,
+    transport,
+    auth: authFor(draft),
+    disabled: !draft.enabled,
+    ...(allow.length === 0 && deny.length === 0
+      ? {}
+      : { toolPolicy: { ...(allow.length === 0 ? {} : { allow }), ...(deny.length === 0 ? {} : { deny }) } }),
+  }
+  if (transport === 'stdio') {
+    const command = splitCommand(draft.connection)
+    const env = parsePairs(draft.headers, '=')
+    return {
+      ...base,
+      command: command.command,
+      ...(command.args.length === 0 ? {} : { args: command.args }),
+      ...(Object.keys(env).length === 0 ? {} : { env }),
+    }
+  }
+  const headers = parsePairs(draft.headers, ':')
   return {
+    ...base,
+    url: draft.connection.trim(),
+    ...(Object.keys(headers).length === 0 ? {} : { headers }),
+  }
+}
+
+/** Build a draft from the stored detail of an existing server. */
+export function draftFromDetail(detail: ServerDetail): Draft {
+  const connection =
+    detail.transport === 'stdio'
+      ? [detail.command ?? '', ...(detail.args ?? [])].join(' ').trim()
+      : (detail.url ?? '')
+  const headers =
+    detail.transport === 'stdio'
+      ? formatPairs(detail.env ?? {}, '=')
+      : formatPairs(detail.headers ?? {}, ':')
+  const auth = detail.auth
+  return {
+    connection,
     name: detail.name,
     transport: detail.transport,
-    url: detail.url ?? '',
-    command: detail.command ?? '',
-    args: (detail.args ?? []).join(' '),
-    cwd: detail.cwd ?? '',
-    headers: recordToLines(detail.headers),
-    env: recordToLines(detail.env),
-    authKind: detail.auth.kind,
-    credential: detail.auth.kind === 'bearer' ? (detail.auth.credential ?? '') : '',
-    scopes: detail.auth.kind === 'oauth' ? (detail.auth.scopes ?? []).join(' ') : '',
+    headers,
+    authKind: auth.kind,
+    credential: auth.kind === 'bearer' ? (auth.credential ?? '') : '',
+    scopes: auth.kind === 'oauth' ? (auth.scopes ?? []).join(' ') : '',
     allow: (detail.toolPolicy?.allow ?? []).join(', '),
     deny: (detail.toolPolicy?.deny ?? []).join(', '),
     enabled: detail.disabled !== true,
   }
 }
 
-export function draftToServer(draft: Draft): Record<string, unknown> {
-  const allow = splitList(draft.allow)
-  const deny = splitList(draft.deny)
-  const auth =
-    draft.authKind === 'none'
-      ? { kind: 'none' }
-      : draft.authKind === 'bearer'
-        ? { kind: 'bearer', ...(draft.credential.trim() === '' ? {} : { credential: draft.credential.trim() }) }
-        : { kind: 'oauth', ...(splitList(draft.scopes).length === 0 ? {} : { scopes: splitList(draft.scopes) }) }
-  return {
-    name: draft.name.trim(),
-    transport: draft.transport,
-    ...(draft.transport === 'stdio'
-      ? {
-          command: draft.command.trim(),
-          ...(splitWords(draft.args).length === 0 ? {} : { args: splitWords(draft.args) }),
-          ...(draft.cwd.trim() === '' ? {} : { cwd: draft.cwd.trim() }),
-          ...(Object.keys(linesToRecord(draft.env)).length === 0 ? {} : { env: linesToRecord(draft.env) }),
-        }
-      : {
-          url: draft.url.trim(),
-          ...(Object.keys(linesToRecord(draft.headers)).length === 0
-            ? {}
-            : { headers: linesToRecord(draft.headers) }),
-        }),
-    auth,
-    disabled: !draft.enabled,
-    ...(allow.length === 0 && deny.length === 0
-      ? {}
-      : { toolPolicy: { ...(allow.length === 0 ? {} : { allow }), ...(deny.length === 0 ? {} : { deny }) } }),
-  }
-}
-
-export function validateDraft(draft: Draft): string | undefined {
-  if (!/^[A-Za-z0-9_-]{1,32}$/.test(draft.name.trim())) return 'name'
-  if (draft.transport === 'streamable-http' && draft.url.trim() === '') return 'connection'
-  if (draft.transport === 'stdio' && draft.command.trim() === '') return 'connection'
-  return undefined
-}
-
-interface FieldProps {
-  readonly id: string
-  readonly label: string
-  readonly hint?: string
-  readonly children: ReactNode
-}
-
-function Field({ id, label, hint, children }: FieldProps): ReactElement {
-  return (
-    <div className="mcp-manager-field">
-      <label className="mcp-manager-field-label" htmlFor={id}>
-        {label}
-      </label>
-      {children}
-      {hint === undefined ? null : <p className="mcp-manager-field-hint">{hint}</p>}
-    </div>
-  )
-}
-
-export interface EditorProps {
+export interface EditorProps extends Record<string, unknown> {
   readonly mode: 'add' | 'edit'
-  readonly initialName?: string
   readonly draft: Draft
+  readonly scopeLabel: string
   readonly error?: string
   readonly busy: boolean
-  readonly onChange: (next: Draft) => void
+  readonly onChange: (draft: Draft) => void
   readonly onSave: () => void
   readonly onCancel: () => void
   readonly t: (key: string) => string
 }
 
+/** Add or edit one server. The connection field is the only required one. */
 export function Editor(props: EditorProps): ReactElement {
-  const { draft, onChange, t } = props
-  const set = <K extends keyof Draft>(key: K, value: Draft[K]): void => onChange({ ...draft, [key]: value })
-  const nameInvalid = draft.name.trim() !== '' && !/^[A-Za-z0-9_-]{1,32}$/.test(draft.name.trim())
+  const { draft, t } = props
+  const [advanced, setAdvanced] = useState(props.mode === 'edit')
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]): void => {
+    props.onChange({ ...draft, [key]: value })
+  }
+  const transport = resolvedTransport(draft)
+  const detected = /^[a-z][a-z0-9+.-]*:\/\//i.test(draft.connection.trim()) ? t('remoteDetected') : t('localDetected')
+
   return (
     <form
-      className="mcp-manager-editor"
+      className="mcp-form"
       onSubmit={(event) => {
         event.preventDefault()
         props.onSave()
       }}
     >
-      <div className="mcp-manager-editor-head">
-        <h3 className="mcp-manager-editor-title">
-          {props.mode === 'add' ? t('addTitle') : `${t('editTitle')} · ${props.initialName ?? draft.name}`}
-        </h3>
-        <button type="button" className="mcp-manager-icon-button" onClick={props.onCancel} aria-label={t('cancel')}>
-          ×
-        </button>
+      <div className="mcp-form-head">
+        <div className="mcp-form-title">
+          <h3>{props.mode === 'add' ? t('addTitle') : t('editTitle')}</h3>
+          <Tag tone="neutral">
+            {props.mode === 'add' ? t('addingTo') + ' ' + props.scopeLabel : draft.name}
+          </Tag>
+        </div>
+        <Button
+          type="button"
+          variant="toolbar"
+          size="sm"
+          aria-label={t('close')}
+          title={t('close')}
+          icon={<IconCloseOutlineRegular size={14} />}
+          onClick={props.onCancel}
+          disabled={props.busy}
+        />
       </div>
 
+      <label className="mcp-field">
+        <span className="mcp-field-label">{t('addressOrCommand')}</span>
+        <Input
+          className="mcp-input"
+          value={draft.connection}
+          placeholder={t('addressPlaceholder')}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => set('connection', event.target.value)}
+        />
+        <span className="mcp-hint">{draft.connection.trim() === '' ? t('addressHint') : detected}</span>
+      </label>
+
+      <div className="mcp-form-tools">
+        <Button type="button" variant="ghost" size="sm" onClick={() => setAdvanced(!advanced)}>
+          {advanced ? t('hideAdvanced') : t('advanced')}
+        </Button>
+      </div>
+
+      {advanced ? (
+        <div className="mcp-form-advanced">
+          <div className="mcp-grid2">
+            <label className="mcp-field">
+              <span className="mcp-field-label">{t('name')}</span>
+              <Input
+                className="mcp-input"
+                value={draft.name}
+                placeholder={t('namePlaceholder')}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => set('name', event.target.value)}
+              />
+              <span className="mcp-hint">{t('nameHint')}</span>
+            </label>
+            <div className="mcp-field">
+              <span className="mcp-field-label">{t('transport')}</span>
+              <SegmentedControl<DraftTransport>
+                id="mcp-transport"
+                value={draft.transport}
+                label={t('transport')}
+                options={[
+                  { value: 'auto', label: t('transportAuto') },
+                  { value: 'stdio', label: t('transportLocal') },
+                  { value: 'streamable-http', label: t('transportRemote') },
+                ]}
+                onChange={(value) => set('transport', value)}
+              />
+            </div>
+          </div>
+
+          <label className="mcp-field">
+            <span className="mcp-field-label">{transport === 'stdio' ? t('environment') : t('headers')}</span>
+            <textarea
+              className="mcp-textarea"
+              value={draft.headers}
+              rows={3}
+              spellCheck={false}
+              placeholder={transport === 'stdio' ? 'API_KEY=value' : 'Authorization: Bearer ...'}
+              onChange={(event) => set('headers', event.target.value)}
+            />
+            <span className="mcp-hint">{transport === 'stdio' ? t('envHint') : t('headersHint')}</span>
+          </label>
+
+          <div className="mcp-grid2">
+            <div className="mcp-field">
+              <span className="mcp-field-label">{t('authentication')}</span>
+              <SegmentedControl<DraftAuth>
+                id="mcp-auth"
+                value={draft.authKind}
+                label={t('authentication')}
+                options={[
+                  { value: 'none', label: t('authNone') },
+                  { value: 'bearer', label: t('authBearer') },
+                  { value: 'oauth', label: t('authOAuth') },
+                ]}
+                onChange={(value) => set('authKind', value)}
+              />
+            </div>
+            {draft.authKind === 'bearer' ? (
+              <label className="mcp-field">
+                <span className="mcp-field-label">{t('credentialRef')}</span>
+                <Input
+                  className="mcp-input"
+                  value={draft.credential}
+                  placeholder="ENACTON_MCP_TOKEN"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => set('credential', event.target.value)}
+                />
+                <span className="mcp-hint">{t('credentialHint')}</span>
+              </label>
+            ) : draft.authKind === 'oauth' ? (
+              <label className="mcp-field">
+                <span className="mcp-field-label">{t('scopes')}</span>
+                <Input
+                  className="mcp-input"
+                  value={draft.scopes}
+                  placeholder="read write"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => set('scopes', event.target.value)}
+                />
+                <span className="mcp-hint">{t('scopesHint')}</span>
+              </label>
+            ) : null}
+          </div>
+
+          <div className="mcp-grid2">
+            <label className="mcp-field">
+              <span className="mcp-field-label">{t('allow')}</span>
+              <Input
+                className="mcp-input"
+                value={draft.allow}
+                placeholder="get*, list*"
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => set('allow', event.target.value)}
+              />
+            </label>
+            <label className="mcp-field">
+              <span className="mcp-field-label">{t('deny')}</span>
+              <Input
+                className="mcp-input"
+                value={draft.deny}
+                placeholder="delete*, update*"
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => set('deny', event.target.value)}
+              />
+            </label>
+          </div>
+          <span className="mcp-hint">{t('policyHint')}</span>
+
+          <Checkbox
+            checked={draft.enabled}
+            label={t('enabled')}
+            onChange={(next) => set('enabled', next)}
+          />
+        </div>
+      ) : null}
+
       {props.error === undefined ? null : (
-        <p className="mcp-manager-error" role="alert">
+        <p className="mcp-form-error" role="alert">
           {props.error}
         </p>
       )}
 
-      <div className="mcp-manager-form-grid">
-        <Field id="mcp-manager-name" label={t('name')} hint={t('nameHint')}>
-          <input
-            id="mcp-manager-name"
-            className="mcp-manager-input"
-            value={draft.name}
-            autoComplete="off"
-            spellCheck={false}
-            aria-invalid={nameInvalid}
-            onChange={(event) => set('name', event.target.value)}
-          />
-          {nameInvalid ? <p className="mcp-manager-field-error">{t('requiredName')}</p> : null}
-        </Field>
-
-        <Field id="mcp-manager-transport" label={t('transport')}>
-          <div className="mcp-manager-segmented" role="group" aria-label={t('transport')}>
-            <button
-              type="button"
-              className="mcp-manager-segment"
-              aria-pressed={draft.transport === 'streamable-http'}
-              onClick={() => set('transport', 'streamable-http')}
-            >
-              {t('transportHttp')}
-            </button>
-            <button
-              type="button"
-              className="mcp-manager-segment"
-              aria-pressed={draft.transport === 'stdio'}
-              onClick={() => set('transport', 'stdio')}
-            >
-              {t('transportStdio')}
-            </button>
-          </div>
-        </Field>
-      </div>
-
-      {draft.transport === 'streamable-http' ? (
-        <Field id="mcp-manager-url" label={t('url')}>
-          <input
-            id="mcp-manager-url"
-            className="mcp-manager-input mcp-manager-mono"
-            value={draft.url}
-            placeholder="https://example.com/mcp"
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => set('url', event.target.value)}
-          />
-        </Field>
-      ) : (
-        <div className="mcp-manager-form-grid">
-          <Field id="mcp-manager-command" label={t('command')}>
-            <input
-              id="mcp-manager-command"
-              className="mcp-manager-input mcp-manager-mono"
-              value={draft.command}
-              placeholder="npx"
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => set('command', event.target.value)}
-            />
-          </Field>
-          <Field id="mcp-manager-args" label={t('args')} hint={t('argsHint')}>
-            <input
-              id="mcp-manager-args"
-              className="mcp-manager-input mcp-manager-mono"
-              value={draft.args}
-              placeholder="-y @modelcontextprotocol/server-filesystem"
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => set('args', event.target.value)}
-            />
-          </Field>
-        </div>
-      )}
-
-      <div className="mcp-manager-form-grid">
-        <Field
-          id="mcp-manager-headers"
-          label={draft.transport === 'stdio' ? t('env') : t('headers')}
-          hint={draft.transport === 'stdio' ? t('envHint') : t('headersHint')}
-        >
-          <textarea
-            id="mcp-manager-headers"
-            className="mcp-manager-textarea mcp-manager-mono"
-            rows={3}
-            spellCheck={false}
-            value={draft.transport === 'stdio' ? draft.env : draft.headers}
-            onChange={(event) =>
-              set(draft.transport === 'stdio' ? 'env' : 'headers', event.target.value)
-            }
-          />
-        </Field>
-        <Field
-          id="mcp-manager-auth"
-          label={t('authentication')}
-          hint={draft.authKind === 'bearer' ? t('credentialHint') : undefined}
-        >
-          <select
-            id="mcp-manager-auth"
-            className="mcp-manager-input"
-            value={draft.authKind}
-            onChange={(event) => set('authKind', event.target.value === 'oauth' ? 'oauth' : event.target.value === 'bearer' ? 'bearer' : 'none')}
-          >
-            <option value="none">{t('authNone')}</option>
-            <option value="bearer">{t('authBearer')}</option>
-            <option value="oauth">{t('authOAuth')}</option>
-          </select>
-          {draft.authKind === 'bearer' ? (
-            <input
-              className="mcp-manager-input mcp-manager-mono"
-              aria-label={t('credentialRef')}
-              placeholder={t('credentialRef')}
-              value={draft.credential}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => set('credential', event.target.value)}
-            />
-          ) : null}
-          {draft.authKind === 'oauth' ? (
-            <input
-              className="mcp-manager-input"
-              aria-label={t('scopes')}
-              placeholder={t('scopesHint')}
-              value={draft.scopes}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => set('scopes', event.target.value)}
-            />
-          ) : null}
-        </Field>
-      </div>
-
-      <div className="mcp-manager-form-grid">
-        <Field id="mcp-manager-allow" label={t('allow')} hint={t('policyHint')}>
-          <input
-            id="mcp-manager-allow"
-            className="mcp-manager-input mcp-manager-mono"
-            value={draft.allow}
-            placeholder="get*, list*"
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => set('allow', event.target.value)}
-          />
-        </Field>
-        <Field id="mcp-manager-deny" label={t('deny')}>
-          <input
-            id="mcp-manager-deny"
-            className="mcp-manager-input mcp-manager-mono"
-            value={draft.deny}
-            placeholder="delete*, update*"
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => set('deny', event.target.value)}
-          />
-        </Field>
-      </div>
-
-      <label className="mcp-manager-check">
-        <input
-          type="checkbox"
-          checked={draft.enabled}
-          onChange={(event) => set('enabled', event.target.checked)}
-        />
-        <span>{t('enabled')}</span>
-      </label>
-
-      <div className="mcp-manager-editor-actions">
-        <button type="button" className="mcp-manager-button" onClick={props.onCancel} disabled={props.busy}>
+      <div className="mcp-form-foot">
+        <Button type="button" variant="ghost" onClick={props.onCancel} disabled={props.busy}>
           {t('cancel')}
-        </button>
-        <button type="submit" className="mcp-manager-button mcp-manager-primary" disabled={props.busy}>
-          {props.busy ? t('saving') : t('save')}
-        </button>
+        </Button>
+        <Button type="submit" variant="primary" disabled={props.busy}>
+          {props.busy ? t('saving') : props.mode === 'add' ? t('addServer') : t('save')}
+        </Button>
       </div>
     </form>
   )

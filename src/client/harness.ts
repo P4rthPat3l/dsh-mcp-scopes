@@ -13,7 +13,7 @@ export interface ConnectionService {
 }
 
 export interface LocaleService {
-  register(namespace: string, dictionaries: Readonly<Record<string, Readonly<Record<string, string>>>>): () => void
+  register(namespace: string, dictionaries: Readonly<Record<string, Readonly<Record<string, string>>>>): void
   bind(namespace: string): (key: string) => string
 }
 
@@ -56,6 +56,19 @@ export interface OverviewServer {
   readonly oauthAttemptId?: string
   readonly toolCount: number
   readonly tools: readonly string[]
+  readonly toolDetails?: readonly { readonly name: string; readonly description: string }[]
+  readonly resources?: readonly {
+    readonly uri: string
+    readonly name: string
+    readonly mimeType?: string
+  }[]
+  readonly prompts?: readonly {
+    readonly name: string
+    readonly description: string
+    readonly arguments: readonly string[]
+  }[]
+  readonly instructions?: string
+  readonly hidden?: boolean
   readonly error?: string
   readonly logs: readonly OverviewLogLine[]
 }

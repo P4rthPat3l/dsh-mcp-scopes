@@ -65,6 +65,23 @@ export interface LogLine {
   readonly message: string
 }
 
+export interface ToolSummary {
+  readonly name: string
+  readonly description: string
+}
+
+export interface ResourceSummary {
+  readonly uri: string
+  readonly name: string
+  readonly mimeType?: string
+}
+
+export interface PromptSummary {
+  readonly name: string
+  readonly description: string
+  readonly arguments: readonly string[]
+}
+
 export interface ServerView {
   readonly name: string
   readonly origin?: ScopeKind
@@ -78,6 +95,11 @@ export interface ServerView {
   readonly oauthAttemptId?: string
   readonly toolCount: number
   readonly tools: readonly string[]
+  readonly toolDetails?: readonly ToolSummary[]
+  readonly resources?: readonly ResourceSummary[]
+  readonly prompts?: readonly PromptSummary[]
+  readonly instructions?: string
+  readonly hidden?: boolean
   readonly error?: string
   readonly logs: readonly LogLine[]
 }
