@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP servers harness</title>
+<style>
+:root {
+  --dsw-alias-bg-base: #f7f7f8;
+  --dsw-alias-bg-layer-1: #ffffff;
+  --dsw-alias-bg-layer-2: #f1f1f3;
+  --dsw-alias-bg-overlay: #ffffff;
+  --dsw-alias-border-l1: #e4e4e7;
+  --dsw-alias-border-l2: #cfcfd4;
+  --dsw-alias-brand-primary: #4d6bfe;
+  --dsw-alias-label-primary: #18181b;
+  --dsw-alias-label-secondary: #6b6b73;
+  --dsw-alias-state-error-primary: #dc2626;
+  --dsw-alias-state-idle-primary: #a1a1aa;
+  --dsw-alias-state-success-primary: #15803d;
+  --dsw-alias-state-warn-primary: #b45309;
+  --dsw-font-size-1: 11px;
+  --dsw-font-size-2: 13px;
+  --dsw-font-size-3: 14px;
+  --dsw-font-size-4: 17px;
+  --dsw-font-family-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --dsw-specific-sidebar-fill: #f1f1f3;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --dsw-alias-bg-base: #111113;
+    --dsw-alias-bg-layer-1: #1a1a1d;
+    --dsw-alias-bg-layer-2: #232327;
+    --dsw-alias-bg-overlay: #232327;
+    --dsw-alias-border-l1: #303036;
+    --dsw-alias-border-l2: #46464f;
+    --dsw-alias-brand-primary: #8ba0ff;
+    --dsw-alias-label-primary: #f4f4f5;
+    --dsw-alias-label-secondary: #a1a1aa;
+    --dsw-alias-state-error-primary: #f87171;
+    --dsw-alias-state-idle-primary: #71717a;
+    --dsw-alias-state-success-primary: #4ade80;
+    --dsw-alias-state-warn-primary: #fbbf24;
+    --dsw-specific-sidebar-fill: #17171a;
+    color-scheme: dark;
+  }
+}
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: Inter, system-ui, sans-serif;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+#root { min-height: 100%; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="./app.js"></script>
+</body>
+</html>

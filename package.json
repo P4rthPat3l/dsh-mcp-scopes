@@ -1,0 +1,56 @@
+{
+  "name": "dsh-mcp-manager",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server manager for DeepSeek Harness: profile and workspace scopes, OAuth-ready connections, and a Settings page.",
+  "license": "MIT",
+  "author": "Parth Patel",
+  "main": "lib/host.js",
+  "exports": {
+    ".": "./lib/host.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "bundle": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node build.mjs && tsc --noEmit && node --import tsx --test tests/*.test.ts tests/*.test.tsx"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "esbuild": "^0.25.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  }
+}
