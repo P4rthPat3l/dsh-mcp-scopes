@@ -493,7 +493,7 @@ export function registerRpc(ctx: HostContext, deps: RpcDeps): void {
       const method = `${RPC_PREFIX}.${endpoint}`
       scope.effect(
         () => connection.fetch.register(routeFor(method, endpoint, handler)),
-        `dsh-mcp-manager: /api/${method}`,
+        `dsh-mcp-scopes: /api/${method}`,
       )
     }
   })

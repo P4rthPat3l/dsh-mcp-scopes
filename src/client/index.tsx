@@ -34,18 +34,18 @@ export function apply(ctx: ClientContext): void {
     try {
       locale.register(NS, { en, zh })
     } catch (error) {
-      console.error('dsh-mcp-manager: locale registration failed', error)
+      console.error('dsh-mcp-scopes: locale registration failed', error)
     }
   }
   ctx.effect(() => {
     const style = document.createElement('style')
-    style.dataset.plugin = 'dsh-mcp-manager'
+    style.dataset.plugin = 'dsh-mcp-scopes'
     style.textContent = CSS
     document.head.appendChild(style)
     return () => {
       style.remove()
     }
-  }, 'dsh-mcp-manager: styles')
+  }, 'dsh-mcp-scopes: styles')
 
   const connection = ctx.get('connection')
   if (!isConnection(connection)) return

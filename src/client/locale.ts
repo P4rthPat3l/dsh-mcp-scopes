@@ -1,6 +1,6 @@
 /** English and Chinese copy for the Settings page. */
 
-export const NS = 'dsh-mcp-manager'
+export const NS = 'dsh-mcp-scopes'
 
 export const en = {
   title: 'MCP servers',

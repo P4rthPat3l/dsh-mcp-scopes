@@ -16,7 +16,7 @@ import type {
   SystemPromptService,
 } from './types.js'
 
-export const name = 'dsh-mcp-manager'
+export const name = 'dsh-mcp-scopes'
 
 export const inject = ['tools']
 
@@ -48,7 +48,7 @@ export function apply(ctx: HostContext): void {
   const loadProfile = async (): Promise<void> => {
     const read = await store.readProfile()
     if (read.error !== undefined) {
-      ctx.logger.warn(`dsh-mcp-manager: profile file ignored: ${read.error}`)
+      ctx.logger.warn(`dsh-mcp-scopes: profile file ignored: ${read.error}`)
       return
     }
     profileCache = read.file
@@ -58,7 +58,7 @@ export function apply(ctx: HostContext): void {
   const attach = async (entry: LiveAgent): Promise<void> => {
     const workspace = await store.readWorkspace(entry.directory)
     if (workspace.error !== undefined) {
-      ctx.logger.warn(`dsh-mcp-manager: workspace file ignored in ${entry.directory}: ${workspace.error}`)
+      ctx.logger.warn(`dsh-mcp-scopes: workspace file ignored in ${entry.directory}: ${workspace.error}`)
     }
     const effective = resolveEffective(profileCache, workspace.missing ? undefined : workspace.file)
     await manager.attachAgent(entry.agent, entry.directory, effective)
@@ -92,7 +92,7 @@ export function apply(ctx: HostContext): void {
         oauth?.dispose()
       }
     },
-    'dsh-mcp-manager: connections',
+    'dsh-mcp-scopes: connections',
   )
 
   ctx.effect(
@@ -106,7 +106,7 @@ export function apply(ctx: HostContext): void {
         try {
           directory = await workingDirectory.ensure(agent, payload.signal)
         } catch (error) {
-          ctx.logger.warn(`dsh-mcp-manager: cannot resolve workspace: ${String(error)}`)
+          ctx.logger.warn(`dsh-mcp-scopes: cannot resolve workspace: ${String(error)}`)
           return
         }
         const entry: LiveAgent = { agent, directory }
@@ -120,12 +120,12 @@ export function apply(ctx: HostContext): void {
                 order: 40,
                 text: () => manager.instructionsFor(agent.id),
               }),
-            'dsh-mcp-manager: instructions',
+            'dsh-mcp-scopes: instructions',
           )
         }
         await attach(entry)
       }),
-    'dsh-mcp-manager: agent hook',
+    'dsh-mcp-scopes: agent hook',
   )
 
   ctx.effect(
@@ -135,7 +135,7 @@ export function apply(ctx: HostContext): void {
         agents.delete(payload.agent.id)
         manager.detachAgent(payload.agent.id)
       }),
-    'dsh-mcp-manager: agent disposal',
+    'dsh-mcp-scopes: agent disposal',
   )
 
   const workspaceRegistry = ctx.get('workspaceRegistry')
@@ -150,5 +150,5 @@ export function apply(ctx: HostContext): void {
     reattachWorkspace,
   })
 
-  ctx.logger.info(`dsh-mcp-manager: profile ${profile}, config ${store.profilePath}`)
+  ctx.logger.info(`dsh-mcp-scopes: profile ${profile}, config ${store.profilePath}`)
 }

@@ -296,7 +296,7 @@ export class ConnectionManager {
     let client: Client | undefined
     try {
       transport = createTransport(def, headers, authProvider)
-      client = new Client({ name: 'dsh-mcp-manager', version: '0.1.0' })
+      client = new Client({ name: 'dsh-mcp-scopes', version: '0.1.0' })
       entry.client = client
       entry.transport = transport
       const connectMs = def.timeouts?.connectMs ?? DEFAULT_CONNECT_TIMEOUT_MS

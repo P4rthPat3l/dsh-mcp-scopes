@@ -9,7 +9,7 @@
 import { build } from 'esbuild'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
-const ID = 'dsh-mcp-manager'
+const ID = 'dsh-mcp-scopes'
 const externals = ['@modelcontextprotocol/client', '@modelcontextprotocol/client/*', '@deepseek-ai/*']
 const clientExternals = ['react', 'react-dom', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives']
 
