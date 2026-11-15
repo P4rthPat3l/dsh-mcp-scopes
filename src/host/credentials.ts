@@ -26,7 +26,9 @@ export async function readApiKey(credentials: CredentialsService | undefined, sc
 }
 
 export async function saveApiKey(credentials: CredentialsService, scopeId: string, value: string): Promise<void> {
-  await credentials.modifyRecord(apiKeyKey(scopeId), async () => ({ kind: 'api-key', payload: { value } }))
+  // The seam admits a static value only as an opaque grant payload. Its api-key
+  // shape carries key and env, so a payload there fails the next boot's parse.
+  await credentials.modifyRecord(apiKeyKey(scopeId), async () => ({ kind: 'grant', payload: { value } }))
 }
 
 export async function clearApiKey(credentials: CredentialsService, scopeId: string): Promise<void> {

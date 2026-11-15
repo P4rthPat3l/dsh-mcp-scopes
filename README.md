@@ -9,7 +9,8 @@ Connect external MCP servers from the Host, scope them to a profile or a workspa
 - A workspace entry shadows a profile entry with the same name, and `disableProfileServers` hides inherited servers for that workspace only.
 - Tools register in each Agent's scope, so a workspace's servers never appear in another workspace's sessions.
 - Bearer tokens come from the credentials store: an environment-style reference in the `Authorization` header, or a stored record.
-- A Settings section lists every server with its status, tools, resources, prompts, instructions, and recent activity, and adds, edits, enables, disables, and deletes servers in either scope.
+- A Settings section lists every server with a status pill, type and auth chips, search, a labeled Details control that opens its tools and credential actions, and a row actions menu. Servers are added, edited, enabled, disabled, and deleted in either scope.
+- The add and edit form asks for Local command or Remote URL, takes one argument per line, and edits headers or environment variables as key and value rows.
 - OAuth sign-in opens a browser tab, uses PKCE and dynamic client registration, refreshes tokens, and falls back to a pasted redirect URL when the browser cannot reach the loopback callback.
 - Bearer tokens can be pasted in the page after saving a server; the value is stored in the credentials store and never returned to the page.
 - Per-server `toolPolicy` allows and denies tools by wildcard (`get*`).
@@ -21,6 +22,7 @@ These renders come from the plugin's visual harness, which mounts the real page 
 ![Server list](docs/screenshots/list-desktop.png)
 ![Add server form](docs/screenshots/editor-desktop.png)
 ![Mobile list](docs/screenshots/list-mobile.png)
+![Empty state, dark](docs/screenshots/empty-dark.png)
 
 ## Install
 

@@ -1,18 +1,34 @@
 /** Draft conversion and the add/edit form, built from Harness primitives. */
 
-import { useRef, useState, type ReactElement } from 'react'
-import { Button, Checkbox, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useRef, useState, type ClipboardEvent, type ReactElement } from 'react'
+import {
+  Button,
+  IconChevronDownOutlineRegular,
+  IconChevronRightOutlineRegular,
+  IconPlusOutlineRegular,
+  IconTrashOutlineRegular,
+  Input,
+  SegmentedControl,
+  Switch,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ServerDetail } from './harness.js'
 import type { AuthConfig, ServerDef } from '../host/types.js'
 
-export type DraftTransport = 'auto' | 'stdio' | 'streamable-http'
+export type DraftKind = 'local' | 'remote'
 export type DraftAuth = 'none' | 'bearer' | 'oauth'
 
+/** One key and value row in the headers or environment editor. */
+export interface PairEntry {
+  readonly key: string
+  readonly value: string
+}
+
 export interface Draft {
+  readonly kind: DraftKind
   readonly connection: string
   readonly name: string
-  readonly transport: DraftTransport
-  readonly headers: string
+  readonly headers: readonly PairEntry[]
+  readonly env: readonly PairEntry[]
   readonly authKind: DraftAuth
   readonly credential: string
   readonly scopes: string
@@ -22,10 +38,11 @@ export interface Draft {
 }
 
 export const EMPTY_DRAFT: Draft = {
+  kind: 'remote',
   connection: '',
   name: '',
-  transport: 'auto',
-  headers: '',
+  headers: [],
+  env: [],
   authKind: 'none',
   credential: '',
   scopes: '',
@@ -50,9 +67,55 @@ export function looksLikeUrl(value: string): boolean {
   return URL_PATTERN.test(value.trim())
 }
 
-export function resolvedTransport(draft: Draft): 'stdio' | 'streamable-http' {
-  if (draft.transport !== 'auto') return draft.transport
-  return looksLikeUrl(draft.connection) ? 'streamable-http' : 'stdio'
+/** Split a command field into one argument per line. */
+export function commandLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+}
+
+/** Split a pasted shell line into arguments, keeping quoted words together. */
+export function splitCommandLine(text: string): string[] {
+  const out: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  for (const char of text) {
+    if (quote !== null) {
+      if (char === quote) quote = null
+      else current += char
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === ' ' || char === '\t' || char === '\r' || char === '\n') {
+      if (current !== '') {
+        out.push(current)
+        current = ''
+      }
+      continue
+    }
+    current += char
+  }
+  if (current !== '') out.push(current)
+  return out
+}
+
+/** Parse a pasted block of KEY=value or Name: value lines. */
+export function parsePairBlock(text: string, separator: ':' | '='): PairEntry[] {
+  const out: PairEntry[] = []
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    const index = trimmed.indexOf(separator)
+    if (index <= 0) continue
+    const key = trimmed.slice(0, index).trim()
+    const value = trimmed.slice(index + 1).trim()
+    if (key !== '') out.push({ key, value })
+  }
+  return out
 }
 
 /** Turn a URL or command into a usable server name. Returns '' when nothing sensible remains. */
@@ -70,7 +133,7 @@ export function deriveName(connection: string): string {
       return ''
     }
   }
-  const parts = value.split(/\s+/).filter((part) => part !== '' && !part.startsWith('-'))
+  const parts = value.split(/[\s\n]+/).filter((part) => part !== '' && !part.startsWith('-'))
   const candidate =
     parts.find((part) => part.includes('/') || part.startsWith('@')) ?? parts[parts.length - 1] ?? ''
   const tail = candidate.split('/').filter((part) => part !== '').pop() ?? candidate
@@ -97,30 +160,17 @@ export function uniqueName(base: string, taken: readonly string[]): string {
   return base
 }
 
-function splitCommand(value: string): { command: string; args: string[] } {
-  const parts = value.trim().split(/\s+/).filter((part) => part !== '')
-  return { command: parts[0] ?? '', args: parts.slice(1) }
-}
-
-function parsePairs(text: string, separator: ':' | '='): Record<string, string> {
+function pairRecord(entries: readonly PairEntry[]): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim()
-    if (trimmed === '') continue
-    const index = trimmed.indexOf(separator)
-    if (index <= 0) continue
-    const key = trimmed.slice(0, index).trim()
-    const value = trimmed.slice(index + 1).trim()
-    if (key !== '') out[key] = value
+  for (const entry of entries) {
+    const key = entry.key.trim()
+    if (key !== '') out[key] = entry.value.trim()
   }
   return out
 }
 
-function formatPairs(record: Readonly<Record<string, string>>, separator: ':' | '='): string {
-  const joiner = separator === ':' ? ': ' : '='
-  return Object.entries(record)
-    .map(([key, value]) => key + joiner + value)
-    .join('\n')
+function entriesOf(record: Readonly<Record<string, string>> | undefined): PairEntry[] {
+  return Object.entries(record ?? {}).map(([key, value]) => ({ key, value }))
 }
 
 function listOf(text: string): string[] {
@@ -131,7 +181,7 @@ function listOf(text: string): string[] {
 }
 
 function authFor(draft: Draft, existing?: AuthConfig): AuthConfig {
-  if (draft.authKind === 'none') return { kind: 'none' }
+  if (draft.kind === 'local' || draft.authKind === 'none') return { kind: 'none' }
   if (draft.authKind === 'bearer') {
     const credential = draft.credential.trim()
     return credential === '' ? { kind: 'bearer' } : { kind: 'bearer', credential }
@@ -153,7 +203,7 @@ export function validateDraft(draft: Draft, existingNames: readonly string[] = [
   const name = draft.name.trim()
   const problems: { connection?: true; url?: true; name?: true; nameTaken?: true } = {}
   if (connection === '') problems.connection = true
-  else if (resolvedTransport(draft) === 'streamable-http') {
+  else if (draft.kind === 'remote') {
     try {
       const url = new URL(connection)
       if (url.protocol !== 'http:' && url.protocol !== 'https:') problems.url = true
@@ -169,12 +219,12 @@ export function validateDraft(draft: Draft, existingNames: readonly string[] = [
 /** Build the internal server definition from a validated draft, keeping unmodeled fields. */
 export function draftToServer(draft: Draft, existing?: ServerDef): ServerDef {
   const name = draft.name.trim()
-  const transport = resolvedTransport(draft)
+  const kind = draft.kind
   const allow = listOf(draft.allow)
   const deny = listOf(draft.deny)
   const base = {
     name,
-    transport,
+    transport: kind === 'local' ? ('stdio' as const) : ('streamable-http' as const),
     auth: authFor(draft, existing?.auth),
     disabled: !draft.enabled,
     ...(allow.length === 0 && deny.length === 0
@@ -182,18 +232,18 @@ export function draftToServer(draft: Draft, existing?: ServerDef): ServerDef {
       : { toolPolicy: { ...(allow.length === 0 ? {} : { allow }), ...(deny.length === 0 ? {} : { deny }) } }),
     ...(existing?.timeouts === undefined ? {} : { timeouts: existing.timeouts }),
   }
-  if (transport === 'stdio') {
-    const command = splitCommand(draft.connection)
-    const env = parsePairs(draft.headers, '=')
+  if (kind === 'local') {
+    const argv = commandLines(draft.connection)
+    const env = pairRecord(draft.env)
     return {
       ...base,
-      command: command.command,
-      ...(command.args.length === 0 ? {} : { args: command.args }),
+      command: argv[0] ?? '',
+      ...(argv.length < 2 ? {} : { args: argv.slice(1) }),
       ...(Object.keys(env).length === 0 ? {} : { env }),
       ...(existing?.cwd === undefined ? {} : { cwd: existing.cwd }),
     }
   }
-  const headers = parsePairs(draft.headers, ':')
+  const headers = pairRecord(draft.headers)
   return {
     ...base,
     url: draft.connection.trim(),
@@ -203,16 +253,16 @@ export function draftToServer(draft: Draft, existing?: ServerDef): ServerDef {
 
 /** Build a draft from the stored detail of an existing server. */
 export function draftFromDetail(detail: ServerDetail): Draft {
+  const kind: DraftKind = detail.transport === 'stdio' ? 'local' : 'remote'
   const connection =
-    detail.transport === 'stdio' ? [detail.command ?? '', ...(detail.args ?? [])].join(' ').trim() : (detail.url ?? '')
-  const headers =
-    detail.transport === 'stdio' ? formatPairs(detail.env ?? {}, '=') : formatPairs(detail.headers ?? {}, ':')
+    kind === 'local' ? [detail.command ?? '', ...(detail.args ?? [])].join('\n').trim() : (detail.url ?? '')
   const auth = detail.auth
   return {
+    kind,
     connection,
     name: detail.name,
-    transport: detail.transport,
-    headers,
+    headers: entriesOf(detail.headers),
+    env: entriesOf(detail.env),
     authKind: auth.kind,
     credential: auth.kind === 'bearer' ? (auth.credential ?? '') : '',
     scopes: auth.kind === 'oauth' ? (auth.scopes ?? []).join(' ') : '',
@@ -220,6 +270,152 @@ export function draftFromDetail(detail: ServerDetail): Draft {
     deny: (detail.toolPolicy?.deny ?? []).join(', '),
     enabled: detail.disabled !== true,
   }
+}
+
+interface PairEditorProps {
+  readonly kind: 'headers' | 'env'
+  readonly entries: readonly PairEntry[]
+  readonly t: (key: string) => string
+  readonly onChange: (entries: readonly PairEntry[]) => void
+}
+
+/** Key and value rows with add, remove, reveal, and block paste. */
+function PairEditor(props: PairEditorProps): ReactElement {
+  const { kind, entries, t } = props
+  const [revealed, setRevealed] = useState<ReadonlySet<number>>(new Set())
+  const [pasteFailed, setPasteFailed] = useState(false)
+  const env = kind === 'env'
+
+  const update = (index: number, field: 'key' | 'value', value: string): void => {
+    const next = entries.map((entry, at) => (at === index ? { ...entry, [field]: value } : entry))
+    props.onChange(next)
+  }
+
+  const add = (): void => {
+    props.onChange([...entries, { key: '', value: '' }])
+  }
+
+  const remove = (index: number): void => {
+    props.onChange(entries.filter((_, at) => at !== index))
+    setRevealed((current) => {
+      const next = new Set(current)
+      next.delete(index)
+      return next
+    })
+  }
+
+  const toggle = (index: number): void => {
+    setRevealed((current) => {
+      const next = new Set(current)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+  }
+
+  const paste = (): void => {
+    setPasteFailed(false)
+    const clipboard = navigator.clipboard
+    if (clipboard === undefined || typeof clipboard.readText !== 'function') {
+      setPasteFailed(true)
+      return
+    }
+    void clipboard.readText().then(
+      (text) => {
+        const parsed = parsePairBlock(text, env ? '=' : ':').map((entry) => ({
+          key: env ? entry.key.toUpperCase().replace(/[^A-Z0-9_]/g, '_') : entry.key.trimStart(),
+          value: entry.value,
+        }))
+        if (parsed.length === 0) {
+          setPasteFailed(true)
+          return
+        }
+        const merged = [...entries]
+        for (const pair of parsed) {
+          const at = merged.findIndex((entry) => entry.key === pair.key)
+          if (at === -1) merged.push(pair)
+          else merged[at] = pair
+        }
+        props.onChange(merged)
+      },
+      () => setPasteFailed(true),
+    )
+  }
+
+  const transform = (value: string): string =>
+    env ? value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') : value.trimStart()
+
+  return (
+    <div className="mcp-pairs">
+      <div className="mcp-pairs-head">
+        <span className="mcp-pairs-title">
+          <span className="mcp-field-label">{env ? t('environment') : t('headers')}</span>
+          <span className="mcp-pairs-count">({entries.length})</span>
+        </span>
+        <Button variant="ghost" size="sm" type="button" onClick={paste}>
+          {env ? t('pasteEnv') : t('pasteHeaders')}
+        </Button>
+      </div>
+      {entries.map((entry, index) => (
+        <div className="mcp-pair-row" key={index}>
+          <Input
+            className="mcp-pair-key"
+            value={entry.key}
+            placeholder={env ? t('envKey') : t('headerName')}
+            aria-label={`${env ? t('envKey') : t('headerName')} ${index + 1}`}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => update(index, 'key', transform(event.target.value))}
+          />
+          <Input
+            className="mcp-pair-value"
+            type={revealed.has(index) ? 'text' : 'password'}
+            value={entry.value}
+            placeholder={env ? t('envValue') : t('headerValue')}
+            aria-label={`${env ? t('envValue') : t('headerValue')} ${index + 1}`}
+            autoComplete="new-password"
+            spellCheck={false}
+            onChange={(event) => update(index, 'value', event.target.value)}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            aria-pressed={revealed.has(index)}
+            aria-label={`${revealed.has(index) ? t('hideValue') : t('showValue')} ${entry.key || index + 1}`}
+            onClick={() => toggle(index)}
+          >
+            {revealed.has(index) ? t('hideValue') : t('showValue')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            aria-label={`${t('removeRow')} ${entry.key || index + 1}`}
+            icon={<IconTrashOutlineRegular size={13} />}
+            onClick={() => remove(index)}
+          />
+        </div>
+      ))}
+      <div className="mcp-pairs-add">
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          icon={<IconPlusOutlineRegular size={13} />}
+          onClick={add}
+        >
+          {env ? t('addVariable') : t('addHeader')}
+        </Button>
+      </div>
+      <span className="mcp-hint">{env ? t('envPlainText') : t('headersPlainText')}</span>
+      {pasteFailed ? (
+        <span className="mcp-hint mcp-hint-error" role="alert">
+          {t('pasteFailed')}
+        </span>
+      ) : null}
+    </div>
+  )
 }
 
 export interface EditorProps extends Record<string, unknown> {
@@ -239,21 +435,19 @@ export function Editor(props: EditorProps): ReactElement {
   const [nameTouched, setNameTouched] = useState(props.mode === 'edit')
   const [problems, setProblems] = useState<DraftProblems>({})
   const connectionRef = useRef<HTMLInputElement>(null)
+  const commandRef = useRef<HTMLTextAreaElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
-  const transport = resolvedTransport(draft)
-  const detected = looksLikeUrl(draft.connection) ? t('remoteDetected') : t('localDetected')
+  const local = draft.kind === 'local'
+  const args = commandLines(draft.connection)
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]): void => {
     props.onChange({ ...draft, [key]: value })
     setProblems({})
   }
 
-  const changeTransport = (value: DraftTransport): void => {
-    props.onChange(
-      value === 'stdio'
-        ? { ...draft, transport: value, authKind: 'none', credential: '', scopes: '' }
-        : { ...draft, transport: value },
-    )
+  const changeKind = (value: DraftKind): void => {
+    if (value === draft.kind) return
+    props.onChange({ ...draft, kind: value, connection: '', name: nameTouched ? draft.name : '' })
     setProblems({})
   }
 
@@ -263,11 +457,26 @@ export function Editor(props: EditorProps): ReactElement {
     setProblems({})
   }
 
+  const pasteCommand = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
+    const parts = splitCommandLine(event.clipboardData.getData('text'))
+    if (parts.length < 2) return
+    event.preventDefault()
+    const field = event.currentTarget
+    const start = field.selectionStart ?? draft.connection.length
+    const end = field.selectionEnd ?? start
+    const before = draft.connection.slice(0, start)
+    const after = draft.connection.slice(end)
+    const prefix = before === '' || before.endsWith('\n') ? '' : '\n'
+    const suffix = after === '' || after.startsWith('\n') ? '' : '\n'
+    changeConnection(before + prefix + parts.join('\n') + suffix + after)
+  }
+
   const submit = (): void => {
     const next = validateDraft(draft, props.existingNames)
     setProblems(next)
     if (next.connection === true || next.url === true) {
-      connectionRef.current?.focus()
+      if (local) commandRef.current?.focus()
+      else connectionRef.current?.focus()
       return
     }
     if (next.name === true || next.nameTaken === true) {
@@ -279,6 +488,13 @@ export function Editor(props: EditorProps): ReactElement {
 
   const connectionBad = problems.connection === true || problems.url === true
   const nameBad = problems.name === true || problems.nameTaken === true
+  const connectionMessage = connectionBad
+    ? local
+      ? t('requiredCommand')
+      : t('requiredUrl')
+    : local
+      ? t('commandHint')
+      : t('urlHint')
 
   return (
     <form
@@ -296,36 +512,80 @@ export function Editor(props: EditorProps): ReactElement {
       )}
 
       <div className="mcp-field">
-        <label className="mcp-field-label" htmlFor="mcp-connection">
-          {t('addressOrCommand')}
-        </label>
-        <Input
-          id="mcp-connection"
-          ref={connectionRef}
-          className="mcp-input"
-          data-modal-autofocus
-          value={draft.connection}
-          placeholder={t('addressPlaceholder')}
-          autoComplete="off"
-          spellCheck={false}
-          aria-invalid={connectionBad || undefined}
-          aria-describedby="mcp-connection-hint"
-          onChange={(event) => changeConnection(event.target.value)}
+        <span className="mcp-field-label">{t('connection')}</span>
+        <SegmentedControl<DraftKind>
+          id="mcp-kind"
+          value={draft.kind}
+          label={t('connection')}
+          options={[
+            { value: 'local', label: t('kindLocal') },
+            { value: 'remote', label: t('kindRemote') },
+          ]}
+          onChange={changeKind}
         />
-        <span
-          id="mcp-connection-hint"
-          className={connectionBad ? 'mcp-hint mcp-hint-error' : 'mcp-hint'}
-          {...(connectionBad ? { role: 'alert' } : {})}
-        >
-          {problems.connection === true
-            ? t('requiredConnection')
-            : problems.url === true
-              ? t('requiredUrl')
-              : draft.connection.trim() === ''
-                ? t('addressHint')
-                : detected}
-        </span>
       </div>
+
+      {local ? (
+        <div className="mcp-field">
+          <label className="mcp-field-label" htmlFor="mcp-connection">
+            {t('command')}
+          </label>
+          <textarea
+            id="mcp-connection"
+            ref={commandRef}
+            className="mcp-textarea mcp-command"
+            data-modal-autofocus
+            rows={4}
+            value={draft.connection}
+            placeholder={t('commandPlaceholder')}
+            autoComplete="off"
+            spellCheck={false}
+            aria-invalid={connectionBad || undefined}
+            aria-describedby="mcp-connection-hint"
+            onChange={(event) => changeConnection(event.target.value)}
+            onPaste={pasteCommand}
+          />
+          {args.length === 0 ? null : (
+            <span className="mcp-args-count">
+              {args.length} {args.length === 1 ? t('argumentWillSave') : t('argumentsWillSave')}
+            </span>
+          )}
+          <span
+            id="mcp-connection-hint"
+            className={connectionBad ? 'mcp-hint mcp-hint-error' : 'mcp-hint'}
+            {...(connectionBad ? { role: 'alert' } : {})}
+          >
+            {connectionMessage}
+          </span>
+        </div>
+      ) : (
+        <div className="mcp-field">
+          <label className="mcp-field-label" htmlFor="mcp-connection">
+            {t('serverUrl')}
+          </label>
+          <Input
+            id="mcp-connection"
+            ref={connectionRef}
+            className="mcp-input"
+            data-modal-autofocus
+            type="url"
+            value={draft.connection}
+            placeholder={t('urlPlaceholder')}
+            autoComplete="off"
+            spellCheck={false}
+            aria-invalid={connectionBad || undefined}
+            aria-describedby="mcp-connection-hint"
+            onChange={(event) => changeConnection(event.target.value)}
+          />
+          <span
+            id="mcp-connection-hint"
+            className={connectionBad ? 'mcp-hint mcp-hint-error' : 'mcp-hint'}
+            {...(connectionBad ? { role: 'alert' } : {})}
+          >
+            {connectionMessage}
+          </span>
+        </div>
+      )}
 
       <div className="mcp-field">
         <label className="mcp-field-label" htmlFor="mcp-name">
@@ -336,7 +596,7 @@ export function Editor(props: EditorProps): ReactElement {
           ref={nameRef}
           className="mcp-input"
           value={draft.name}
-          placeholder={t('namePlaceholder')}
+          placeholder={local ? t('namePlaceholderLocal') : t('namePlaceholderRemote')}
           autoComplete="off"
           spellCheck={false}
           aria-invalid={nameBad || undefined}
@@ -355,37 +615,26 @@ export function Editor(props: EditorProps): ReactElement {
         </span>
       </div>
 
-      <div className="mcp-form-tools">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          aria-expanded={advanced}
-          aria-controls="mcp-advanced"
-          onClick={() => setAdvanced(!advanced)}
-        >
-          {advanced ? t('hideAdvanced') : t('advanced')}
-        </Button>
-      </div>
+      <button
+        type="button"
+        className="mcp-advanced-toggle"
+        aria-expanded={advanced}
+        aria-controls="mcp-advanced"
+        onClick={() => setAdvanced(!advanced)}
+      >
+        <span className="mcp-advanced-label">{t('advanced')}</span>
+        <span className="mcp-advanced-summary">{local ? t('advancedLocal') : t('advancedRemote')}</span>
+        {advanced ? (
+          <IconChevronDownOutlineRegular size={14} />
+        ) : (
+          <IconChevronRightOutlineRegular size={14} />
+        )}
+      </button>
 
       {advanced ? (
         <div className="mcp-form-advanced" id="mcp-advanced">
-          <div className="mcp-grid2">
-            <div className="mcp-field">
-              <span className="mcp-field-label">{t('transport')}</span>
-              <SegmentedControl<DraftTransport>
-                id="mcp-transport"
-                value={draft.transport}
-                label={t('transport')}
-                options={[
-                  { value: 'auto', label: t('transportAuto') },
-                  { value: 'stdio', label: t('transportLocal') },
-                  { value: 'streamable-http', label: t('transportRemote') },
-                ]}
-                onChange={changeTransport}
-              />
-            </div>
-            {transport === 'stdio' ? null : (
+          {local ? null : (
+            <>
               <div className="mcp-field">
                 <span className="mcp-field-label">{t('authentication')}</span>
                 <SegmentedControl<DraftAuth>
@@ -400,108 +649,105 @@ export function Editor(props: EditorProps): ReactElement {
                   onChange={(value) => set('authKind', value)}
                 />
               </div>
-            )}
-          </div>
+              {draft.authKind === 'bearer' ? (
+                <div className="mcp-field">
+                  <label className="mcp-field-label" htmlFor="mcp-credential">
+                    {t('credentialRef')}
+                  </label>
+                  <Input
+                    id="mcp-credential"
+                    className="mcp-input"
+                    value={draft.credential}
+                    placeholder="ENACTON_MCP_TOKEN"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-describedby="mcp-credential-hint"
+                    onChange={(event) => set('credential', event.target.value)}
+                  />
+                  <span className="mcp-hint" id="mcp-credential-hint">
+                    {t('credentialHint')}
+                  </span>
+                </div>
+              ) : draft.authKind === 'oauth' ? (
+                <div className="mcp-field">
+                  <label className="mcp-field-label" htmlFor="mcp-scopes">
+                    {t('scopes')}
+                  </label>
+                  <Input
+                    id="mcp-scopes"
+                    className="mcp-input"
+                    value={draft.scopes}
+                    placeholder="read write"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-describedby="mcp-scopes-hint"
+                    onChange={(event) => set('scopes', event.target.value)}
+                  />
+                  <span className="mcp-hint" id="mcp-scopes-hint">
+                    {t('scopesHint')}
+                  </span>
+                </div>
+              ) : null}
+              <PairEditor
+                kind="headers"
+                entries={draft.headers}
+                t={t}
+                onChange={(entries) => set('headers', entries)}
+              />
+            </>
+          )}
 
-          {draft.authKind === 'bearer' ? (
-            <div className="mcp-field">
-              <label className="mcp-field-label" htmlFor="mcp-credential">
-                {t('credentialRef')}
-              </label>
-              <Input
-                id="mcp-credential"
-                className="mcp-input"
-                value={draft.credential}
-                placeholder="ENACTON_MCP_TOKEN"
-                autoComplete="off"
-                spellCheck={false}
-                aria-describedby="mcp-credential-hint"
-                onChange={(event) => set('credential', event.target.value)}
-              />
-              <span className="mcp-hint" id="mcp-credential-hint">
-                {t('credentialHint')}
-              </span>
-            </div>
-          ) : draft.authKind === 'oauth' ? (
-            <div className="mcp-field">
-              <label className="mcp-field-label" htmlFor="mcp-scopes">
-                {t('scopes')}
-              </label>
-              <Input
-                id="mcp-scopes"
-                className="mcp-input"
-                value={draft.scopes}
-                placeholder="read write"
-                autoComplete="off"
-                spellCheck={false}
-                aria-describedby="mcp-scopes-hint"
-                onChange={(event) => set('scopes', event.target.value)}
-              />
-              <span className="mcp-hint" id="mcp-scopes-hint">
-                {t('scopesHint')}
-              </span>
-            </div>
+          {local ? (
+            <PairEditor kind="env" entries={draft.env} t={t} onChange={(entries) => set('env', entries)} />
           ) : null}
 
           <div className="mcp-field">
-            <label className="mcp-field-label" htmlFor="mcp-headers">
-              {transport === 'stdio' ? t('environment') : t('headers')}
-            </label>
-            <textarea
-              id="mcp-headers"
-              className="mcp-textarea"
-              value={draft.headers}
-              rows={3}
-              spellCheck={false}
-              placeholder={transport === 'stdio' ? 'API_KEY=value' : 'Authorization: Bearer ...'}
-              aria-describedby="mcp-headers-hint"
-              onChange={(event) => set('headers', event.target.value)}
-            />
-            <span className="mcp-hint" id="mcp-headers-hint">
-              {transport === 'stdio' ? t('envHint') : t('headersHint')}
+            <div className="mcp-grid2">
+              <div className="mcp-field">
+                <label className="mcp-field-label" htmlFor="mcp-allow">
+                  {t('allow')}
+                </label>
+                <Input
+                  id="mcp-allow"
+                  className="mcp-input"
+                  value={draft.allow}
+                  placeholder="get*, list*"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby="mcp-policy-hint"
+                  onChange={(event) => set('allow', event.target.value)}
+                />
+              </div>
+              <div className="mcp-field">
+                <label className="mcp-field-label" htmlFor="mcp-deny">
+                  {t('deny')}
+                </label>
+                <Input
+                  id="mcp-deny"
+                  className="mcp-input"
+                  value={draft.deny}
+                  placeholder="delete*, update*"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby="mcp-policy-hint"
+                  onChange={(event) => set('deny', event.target.value)}
+                />
+              </div>
+            </div>
+            <span className="mcp-hint" id="mcp-policy-hint">
+              {t('policyHint')}
             </span>
           </div>
 
-          <div className="mcp-grid2">
-            <div className="mcp-field">
-              <label className="mcp-field-label" htmlFor="mcp-allow">
-                {t('allow')}
-              </label>
-              <Input
-                id="mcp-allow"
-                className="mcp-input"
-                value={draft.allow}
-                placeholder="get*, list*"
-                autoComplete="off"
-                spellCheck={false}
-                aria-describedby="mcp-policy-hint"
-                onChange={(event) => set('allow', event.target.value)}
-              />
-            </div>
-            <div className="mcp-field">
-              <label className="mcp-field-label" htmlFor="mcp-deny">
-                {t('deny')}
-              </label>
-              <Input
-                id="mcp-deny"
-                className="mcp-input"
-                value={draft.deny}
-                placeholder="delete*, update*"
-                autoComplete="off"
-                spellCheck={false}
-                aria-describedby="mcp-policy-hint"
-                onChange={(event) => set('deny', event.target.value)}
-              />
+          <div className="mcp-enabled">
+            <Switch checked={draft.enabled} label={t('enabled')} onChange={(next) => set('enabled', next)} />
+            <div className="mcp-enabled-text">
+              <span className="mcp-enabled-label">{t('enabled')}</span>
+              <span className="mcp-hint">{t('enabledHint')}</span>
             </div>
           </div>
-          <span className="mcp-hint" id="mcp-policy-hint">
-            {t('policyHint')}
-          </span>
-
-          <Checkbox checked={draft.enabled} label={t('enabled')} onChange={(next) => set('enabled', next)} />
         </div>
       ) : null}
-
     </form>
   )
 }

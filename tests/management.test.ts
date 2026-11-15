@@ -8,6 +8,7 @@ import { ConnectionManager } from '../src/host/connection.js'
 import { registerRpc } from '../src/host/rpc.js'
 import type { ConnectionFetchRoute, HostContext } from '../src/host/types.js'
 import { makeCtx, MemoryCredentials, ToolRegistry } from './helpers.js'
+import { saveApiKey } from '../src/host/credentials.js'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -265,7 +266,7 @@ test('AC-013: setToken stores a credential record and never returns the value', 
     assert.equal(JSON.stringify(result).includes('top-secret-value'), false)
     const stored = [...credentials.records.values()]
     assert.equal(stored.length, 1)
-    assert.equal(JSON.stringify(stored[0]).includes('top-secret-value'), true)
+    assert.deepEqual(stored[0], { kind: 'grant', payload: { value: 'top-secret-value' } })
     const overview = await callRoute(routes, 'overview', {})
     assert.equal(overview.ok, true)
     assert.equal(JSON.stringify(overview).includes('top-secret-value'), false)
@@ -273,4 +274,10 @@ test('AC-013: setToken stores a credential record and never returns the value', 
     await manager.dispose()
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('AC-021: a saved token is a grant record the credentials seam can read', async () => {
+  const credentials = new MemoryCredentials()
+  await saveApiKey(credentials, 'profile', 'top-secret-value')
+  assert.deepEqual([...credentials.records.values()], [{ kind: 'grant', payload: { value: 'top-secret-value' } }])
 })

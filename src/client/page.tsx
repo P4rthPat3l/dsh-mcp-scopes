@@ -8,14 +8,16 @@ import {
   Modal,
   PathLabel,
   SegmentedTabs,
-  StateDot,
   Switch,
   Tag,
   TextShimmer,
   Toast,
+  IconApiOutlineRegular,
   IconChevronDownOutlineRegular,
   IconChevronRightOutlineRegular,
+  IconCodeOutlineRegular,
   IconEditOutlineRegular,
+  IconEllipsisOutlineRegular,
   IconPlusOutlineRegular,
   IconRefreshOutlineRegular,
   IconSearchOutlineRegular,
@@ -129,6 +131,14 @@ function countLabel(count: number, t: (key: string) => string): string {
   return count + ' ' + (count === 1 ? t('toolUnit') : t('toolsUnit'))
 }
 
+function serverMatches(server: OverviewServer, query: string): boolean {
+  return (
+    server.name.toLowerCase().includes(query) ||
+    server.target.toLowerCase().includes(query) ||
+    server.tools.some((tool) => tool.toLowerCase().includes(query))
+  )
+}
+
 interface RowProps {
   readonly server: OverviewServer
   readonly own: boolean
@@ -145,7 +155,6 @@ interface RowProps {
   readonly onDelete: () => void
   readonly onManageProfile: () => void
   readonly onEnabled: (enabled: boolean) => void
-  readonly onSetToken: () => void
   readonly onTokenValue: (value: string) => void
   readonly onSaveToken: () => void
   readonly onClearToken: () => void
@@ -159,21 +168,25 @@ interface RowProps {
   readonly onRetry: () => void
 }
 
-function AuthPanel(props: RowProps): ReactElement | null {
+export function AuthPanel(props: RowProps): ReactElement | null {
   const { server, t } = props
   if (server.authKind === 'bearer') {
     if (server.status === 'ready' && !props.authReveal) {
       if (server.authConfigured === false) return null
       return (
-        <div className="mcp-auth-line">
-          <Tag tone="quiet">{t('token')}</Tag>
-          <span className="mcp-auth-note">{t('tokenStored')}</span>
-          <Button variant="ghost" size="sm" onClick={() => props.onAuthReveal(true)}>
-            {t('replaceToken')}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={props.onClearToken} disabled={props.busy}>
-            {t('clearToken')}
-          </Button>
+        <div className="mcp-auth mcp-auth-ready">
+          <div className="mcp-auth-state">
+            <Tag tone="quiet">{t('token')}</Tag>
+            <span className="mcp-auth-note">{t('tokenStored')}</span>
+          </div>
+          <div className="mcp-auth-actions">
+            <Button variant="outline" size="sm" onClick={() => props.onAuthReveal(true)}>
+              {t('replaceToken')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={props.onClearToken} disabled={props.busy}>
+              {t('clearToken')}
+            </Button>
+          </div>
         </div>
       )
     }
@@ -266,12 +279,16 @@ function AuthPanel(props: RowProps): ReactElement | null {
     }
     if (server.status === 'ready') {
       return (
-        <div className="mcp-auth-line">
-          <Tag tone="quiet">{t('authOAuth')}</Tag>
-          <span className="mcp-auth-note">{t('oauthSignedIn')}</span>
-          <Button variant="ghost" size="sm" onClick={props.onSignOut} disabled={props.busy}>
-            {t('signOut')}
-          </Button>
+        <div className="mcp-auth mcp-auth-ready">
+          <div className="mcp-auth-state">
+            <Tag tone="quiet">{t('authOAuth')}</Tag>
+            <span className="mcp-auth-note">{t('oauthSignedIn')}</span>
+          </div>
+          <div className="mcp-auth-actions">
+            <Button variant="outline" size="sm" onClick={props.onSignOut} disabled={props.busy}>
+              {t('signOut')}
+            </Button>
+          </div>
         </div>
       )
     }
@@ -378,37 +395,31 @@ function DetailBody(props: RowProps): ReactElement {
 
 function ServerCard(props: RowProps): ReactElement {
   const { server, own, t } = props
+  const [menuOpen, setMenuOpen] = useState(false)
   const status = statusOf(server, own, t)
   const checked = own ? !server.disabled : server.hidden !== true
   const locked = !own && server.disabled === true
-  const need =
-    !own || server.disabled === true
-      ? undefined
-      : server.status === 'needs_token'
-        ? 'token'
-        : server.status === 'needs_auth'
-          ? 'auth'
-          : undefined
+  const muted = server.disabled === true
   const nameId = `mcp-name-${keyOf(server).replace(/[^A-Za-z0-9_-]/g, '-')}`
   const detailsId = `mcp-details-${keyOf(server).replace(/[^A-Za-z0-9_-]/g, '-')}`
   const panelId = `mcp-panel-${keyOf(server).replace(/[^A-Za-z0-9_-]/g, '-')}`
   const tabId = (tab: DetailTab): string => `mcp-tab-${keyOf(server).replace(/[^A-Za-z0-9_-]/g, '-')}-${tab}`
-  const meta = [
-    server.toolCount > 0 ? countLabel(server.toolCount, t) : '',
+  const chips = [
     transportLabel(server, t),
-    server.authKind === 'none' ? '' : authLabel(server, t),
-  ].filter((part) => part !== '')
-
-  const cta =
-    own && need === 'token' ? (
-      <Button variant="primary" size="sm" onClick={props.onSetToken}>
-        {t('setToken')}
-      </Button>
-    ) : own && need === 'auth' ? (
-      <Button variant="primary" size="sm" onClick={props.onSignIn} disabled={props.busy}>
-        {t('signIn')}
-      </Button>
-    ) : null
+    ...(server.authKind === 'none' ? [] : [authLabel(server, t)]),
+    ...(server.toolCount > 0 ? [countLabel(server.toolCount, t)] : []),
+  ]
+  const menuItems: MenuEntry[] = [
+    { id: 'edit', label: t('edit'), icon: <IconEditOutlineRegular size={14} />, disabled: props.busy },
+    { type: 'separator', id: 'separator' },
+    {
+      id: 'delete',
+      label: t('delete'),
+      icon: <IconTrashOutlineRegular size={14} />,
+      danger: true,
+      disabled: props.busy,
+    },
+  ]
 
   const tabItems = ([
     { value: 'tools' as const, label: t('tools') + (server.toolCount > 0 ? ' ' + server.toolCount : '') },
@@ -425,7 +436,12 @@ function ServerCard(props: RowProps): ReactElement {
   ] as const).map((item) => ({ ...item, id: tabId(item.value), panelId }))
 
   return (
-    <article className="mcp-card" data-open={props.expanded || undefined} aria-labelledby={nameId}>
+    <article
+      className="mcp-card"
+      data-open={props.expanded || undefined}
+      data-muted={muted || undefined}
+      aria-labelledby={nameId}
+    >
       <div className="mcp-card-head">
         <button
           type="button"
@@ -434,8 +450,12 @@ function ServerCard(props: RowProps): ReactElement {
           aria-expanded={props.expanded}
           {...(props.expanded ? { 'aria-controls': detailsId } : {})}
         >
-          <span className="mcp-card-dot">
-            <StateDot state={status.state} />
+          <span className="mcp-tile" aria-hidden="true">
+            {server.transport === 'stdio' ? (
+              <IconCodeOutlineRegular size={16} />
+            ) : (
+              <IconApiOutlineRegular size={16} />
+            )}
           </span>
           <span className="mcp-card-text">
             <span className="mcp-card-title">
@@ -447,53 +467,79 @@ function ServerCard(props: RowProps): ReactElement {
             <span className="mcp-card-target" title={server.target}>
               {server.target}
             </span>
-            <span className="mcp-card-meta">
-              <span className="mcp-card-status" data-tone={status.tone}>
-                {status.state === 'ongoing' ? <TextShimmer active>{status.label}</TextShimmer> : status.label}
-              </span>
-              {meta.map((part) => (
-                <span key={part} className="mcp-card-meta-part">
-                  <span className="mcp-card-sep" aria-hidden="true">
-                    ·
-                  </span>
-                  <span>{part}</span>
-                </span>
+            <span className="mcp-card-chips">
+              {chips.map((chip) => (
+                <Tag key={chip} tone="quiet">
+                  {chip}
+                </Tag>
               ))}
             </span>
-            {server.error === undefined ? null : <span className="mcp-card-error">{server.error}</span>}
+            {props.expanded || server.error === undefined ? null : (
+              <span className="mcp-card-error">{server.error}</span>
+            )}
           </span>
         </button>
+
+        <span className="mcp-status" data-tone={status.tone}>
+          <span className="mcp-status-dot" aria-hidden="true" />
+          {status.state === 'ongoing' ? <TextShimmer active>{status.label}</TextShimmer> : status.label}
+        </span>
+
         <div className="mcp-card-end">
-          {cta}
           <Switch
             checked={checked}
             label={own ? `${server.name} ${t('enabled')}` : `${server.name} ${t('availableHere')}`}
             disabled={locked || props.busy}
-            title={
-              locked ? t('lockedInProfile') : own ? t('enabledHint') : t('inheritedSwitchHint')
-            }
+            title={locked ? t('lockedInProfile') : own ? t('enabledHint') : t('inheritedSwitchHint')}
             onChange={(next) => props.onEnabled(next)}
           />
+          {own ? (
+            <Menu
+              open={menuOpen}
+              onClose={() => setMenuOpen(false)}
+              onSelect={(id) => {
+                setMenuOpen(false)
+                if (id === 'edit') props.onEdit()
+                else if (id === 'delete') props.onDelete()
+              }}
+              items={menuItems}
+              align="end"
+              portal
+              anchor={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`${t('serverActions')} ${server.name}`}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  icon={<IconEllipsisOutlineRegular size={14} />}
+                  onClick={() => setMenuOpen(!menuOpen)}
+                />
+              }
+            />
+          ) : null}
           <Button
             variant="ghost"
             size="sm"
+            className="mcp-expand"
             aria-label={`${props.expanded ? t('hideDetails') : t('details')} ${server.name}`}
             aria-expanded={props.expanded}
             {...(props.expanded ? { 'aria-controls': detailsId } : {})}
-            icon={
-              props.expanded ? (
-                <IconChevronDownOutlineRegular size={14} />
-              ) : (
-                <IconChevronRightOutlineRegular size={14} />
-              )
-            }
             onClick={props.onToggle}
-          />
+          >
+            <span className="mcp-expand-label">{t('details')}</span>
+            {props.expanded ? (
+              <IconChevronDownOutlineRegular size={14} />
+            ) : (
+              <IconChevronRightOutlineRegular size={14} />
+            )}
+          </Button>
         </div>
       </div>
 
       {props.expanded ? (
         <div className="mcp-card-details" id={detailsId}>
+          {own ? <AuthPanel {...props} /> : null}
           {server.error === undefined ? null : (
             <div className="mcp-error-row" role="alert">
               <IconWarningOutlineRegular size={14} />
@@ -503,7 +549,6 @@ function ServerCard(props: RowProps): ReactElement {
               </Button>
             </div>
           )}
-          {own ? <AuthPanel {...props} /> : null}
           <SegmentedTabs<DetailTab>
             items={tabItems}
             value={props.tab}
@@ -523,41 +568,27 @@ function ServerCard(props: RowProps): ReactElement {
           {server.status === 'needs_auth' && props.attempt !== undefined ? (
             <span className="mcp-hint">{t('signInPending')}</span>
           ) : null}
-          <div className="mcp-card-foot">
-            {own ? (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<IconEditOutlineRegular size={14} />}
-                  disabled={props.busy}
-                  onClick={props.onEdit}
-                >
-                  {t('edit')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mcp-danger"
-                  icon={<IconTrashOutlineRegular size={14} />}
-                  disabled={props.busy}
-                  onClick={props.onDelete}
-                >
-                  {t('delete')}
-                </Button>
-              </>
-            ) : (
-              <>
-                <span className="mcp-hint">{t('inheritedNote')}</span>
-                <Button variant="ghost" size="sm" onClick={props.onManageProfile}>
-                  {t('manageInAllWorkspaces')}
-                </Button>
-              </>
-            )}
-          </div>
+          {own ? null : (
+            <div className="mcp-card-foot">
+              <span className="mcp-hint">{t('inheritedNote')}</span>
+              <Button variant="ghost" size="sm" onClick={props.onManageProfile}>
+                {t('manageInAllWorkspaces')}
+              </Button>
+            </div>
+          )}
         </div>
       ) : null}
     </article>
+  )
+}
+
+function AddTile(props: { readonly t: (key: string) => string; readonly onClick: () => void }): ReactElement {
+  return (
+    <button type="button" className="mcp-add-tile" onClick={props.onClick}>
+      <IconPlusOutlineRegular size={16} />
+      <span className="mcp-add-tile-label">{props.t('addServer')}</span>
+      <span className="mcp-add-tile-hint">{props.t('addTileHint')}</span>
+    </button>
   )
 }
 
@@ -587,6 +618,7 @@ export function McpManagerPage(props: PageProps): ReactElement {
   const path = scope === 'profile' ? (data?.profile.path ?? '') : (workspace?.filePath ?? '')
   const fileError = scope === 'profile' ? data?.profile.error : workspace?.error
 
+  const [search, setSearch] = useState('')
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [scopeOpen, setScopeOpen] = useState(false)
   const [showHidden, setShowHidden] = useState<Record<string, boolean>>({})
@@ -606,6 +638,8 @@ export function McpManagerPage(props: PageProps): ReactElement {
 
   const revealHidden = showHidden[scope] === true
   const rows = scope === 'profile' ? visible : revealHidden ? servers : visible
+  const query = search.trim().toLowerCase()
+  const filtered = query === '' ? rows : rows.filter((server) => serverMatches(server, query))
   const t = props.t
   const busy = busyKey !== null
 
@@ -629,6 +663,7 @@ export function McpManagerPage(props: PageProps): ReactElement {
   const changeScope = (next: string): void => {
     setRequestedScope(next)
     setScopeOpen(false)
+    setSearch('')
     setEditor(null)
     setActionError(null)
   }
@@ -847,10 +882,6 @@ export function McpManagerPage(props: PageProps): ReactElement {
         setExpanded((current) => ({ ...current, [key]: true }))
       },
       onEnabled: (enabled) => (own ? setEnabled(server, enabled) : setWorkspaceState(server, enabled)),
-      onSetToken: () => {
-        setExpanded((current) => ({ ...current, [key]: true }))
-        setAuthReveals((current) => ({ ...current, [key]: true }))
-      },
       onTokenValue: (value) => {
         if (server.authKind === 'oauth') setRedirects((current) => ({ ...current, [key]: value }))
         else setTokenValues((current) => ({ ...current, [key]: value }))
@@ -920,6 +951,16 @@ export function McpManagerPage(props: PageProps): ReactElement {
     <section className="mcp" aria-label={t('title')}>
       <h2 className="mcp-visually-hidden">{t('title')}</h2>
       <header className="mcp-toolbar">
+        <Input
+          className="mcp-search"
+          icon={<IconSearchOutlineRegular size={14} />}
+          placeholder={t('searchServers')}
+          aria-label={t('searchServers')}
+          autoComplete="off"
+          spellCheck={false}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
         <Menu
           open={scopeOpen}
           onClose={() => setScopeOpen(false)}
@@ -946,35 +987,31 @@ export function McpManagerPage(props: PageProps): ReactElement {
             </Button>
           }
         />
-        <Button className="mcp-add" variant="primary" icon={<IconPlusOutlineRegular size={14} />} onClick={openAdd}>
-          {t('addServer')}
-        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mcp-refresh"
+          aria-label={t('refresh')}
+          title={t('refresh')}
+          icon={<IconRefreshOutlineRegular size={15} />}
+          onClick={() => void props.store.refresh()}
+        />
       </header>
 
       <div className="mcp-subbar">
         <span className="mcp-scope-note">{scopeNote}</span>
-        <div className="mcp-subactions">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<IconRefreshOutlineRegular size={14} />}
-            onClick={() => void props.store.refresh()}
-          >
-            {t('refresh')}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              void run('reconnect', async () => {
-                await props.store.call('reconnect', {})
-              })
-            }
-            disabled={busy}
-          >
-            {t('reconnectAll')}
-          </Button>
-        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            void run('reconnect', async () => {
+              await props.store.call('reconnect', {})
+            })
+          }
+          disabled={busy}
+        >
+          {t('reconnectAll')}
+        </Button>
       </div>
 
       {showError ? (
@@ -1011,22 +1048,29 @@ export function McpManagerPage(props: PageProps): ReactElement {
         <div className="mcp-empty">
           <h3>{hiddenCount > 0 ? t('noActiveServers') : t('noServersTitle')}</h3>
           <p>{hiddenCount > 0 ? t('noActiveServersBody') : t('noServersBody')}</p>
-          <div className="mcp-empty-actions">
-            {hiddenCount > 0 ? (
+          {hiddenCount > 0 ? (
+            <div className="mcp-empty-actions">
               <Button variant="ghost" onClick={() => setShowHidden((current) => ({ ...current, [scope]: true }))}>
                 {t('showHidden')}
               </Button>
-            ) : null}
-            <Button variant="primary" icon={<IconPlusOutlineRegular size={14} />} onClick={openAdd}>
-              {t('addServer')}
-            </Button>
-          </div>
+            </div>
+          ) : null}
+          <AddTile t={t} onClick={openAdd} />
         </div>
       ) : (
         <div className="mcp-list">
-          {rows.map((server) => (
-            <ServerCard key={`${server.name}:${server.origin ?? 'profile'}`} {...rowProps(server)} />
-          ))}
+          {filtered.length === 0 ? (
+            <div className="mcp-search-empty">
+              <span>{t('noSearchResults')}</span>
+              <Button variant="ghost" size="sm" onClick={() => setSearch('')}>
+                {t('clearSearch')}
+              </Button>
+            </div>
+          ) : (
+            filtered.map((server) => (
+              <ServerCard key={`${server.name}:${server.origin ?? 'profile'}`} {...rowProps(server)} />
+            ))
+          )}
           {hiddenCount > 0 ? (
             <div className="mcp-hidden-row">
               <span className="mcp-muted">
@@ -1041,6 +1085,7 @@ export function McpManagerPage(props: PageProps): ReactElement {
               </Button>
             </div>
           ) : null}
+          <AddTile t={t} onClick={openAdd} />
         </div>
       )}
 
