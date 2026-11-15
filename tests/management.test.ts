@@ -240,6 +240,42 @@ test('AC-016: hiding a profile server in a workspace writes the override and mar
   }
 })
 
+test('workspace overview lists registered workspaces and saves only to the selected workspace', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mcp-manager-workspaces-'))
+  const first = join(dir, 'first')
+  const second = join(dir, 'second')
+  const routes = new Map<string, ConnectionFetchRoute>()
+  const store = new ConfigStore(join(dir, 'profile.json'))
+  const manager = new ConnectionManager(makeCtx(new ToolRegistry()), undefined)
+  try {
+    registerRpc(rpcContext(routes), {
+      store,
+      manager,
+      workspaces: { list: () => [{ id: 'first', title: 'First', path: first }, { id: 'second', title: 'Second', path: second }] },
+      profile: () => ({ version: 1, servers: [] }),
+      credentials: undefined,
+      oauth: undefined,
+      reloadProfile: async () => undefined,
+      reattachWorkspace: async () => undefined,
+    })
+    const overview = await callRoute(routes, 'overview', {})
+    assert.ok(isRecord(overview.value))
+    assert.ok(Array.isArray(overview.value.workspaces))
+    assert.deepEqual(overview.value.workspaces.map((entry: unknown) => isRecord(entry) ? entry.id : undefined), ['first', 'second'])
+    const result = await callRoute(routes, 'saveServer', {
+      scope: 'workspace', workspaceId: 'first',
+      server: { name: 'local-only', transport: 'streamable-http', url: 'https://example.com/mcp', auth: { kind: 'none' } },
+    })
+    assert.equal(result.ok, true)
+    assert.deepEqual((await store.readWorkspace(first)).file.servers.map((server) => server.name), ['local-only'])
+    assert.equal((await store.readWorkspace(second)).missing, true)
+    assert.equal((await store.readProfile()).file.servers.length, 0)
+  } finally {
+    await manager.dispose()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('AC-013: setToken stores a credential record and never returns the value', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mcp-manager-token-'))
   const routes = new Map<string, ConnectionFetchRoute>()

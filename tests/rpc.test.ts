@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { ConfigStore } from '../src/host/store.js'
 import { ConnectionManager } from '../src/host/connection.js'
 import { registerRpc } from '../src/host/rpc.js'
+import { inject } from '../src/host/index.js'
 import type { ConnectionFetchRoute, HostContext } from '../src/host/types.js'
 import type { RpcDeps } from '../src/host/rpc.js'
 import { makeCtx, ToolRegistry } from './helpers.js'
@@ -56,6 +57,10 @@ function envelope(method: string): Request {
     body: JSON.stringify({ type: 'client-request', rpcId: 'rpc-1', method, payload: {} }),
   })
 }
+
+test('workspace registry is ready before the host captures it', () => {
+  assert.ok(inject.includes('workspaceRegistry'))
+})
 
 test('AC-015: the overview route answers a client envelope', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mcp-manager-rpc-'))

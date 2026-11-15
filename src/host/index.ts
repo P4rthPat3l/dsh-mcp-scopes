@@ -18,7 +18,7 @@ import type {
 
 export const name = 'dsh-mcp-scopes'
 
-export const inject = ['tools', 'credentials']
+export const inject = ['tools', 'credentials', 'workspaceRegistry']
 
 interface AgentCreatedPayload {
   readonly agent: AgentRef
