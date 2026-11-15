@@ -17,21 +17,47 @@ Connect external MCP servers from the Host, scope them to a profile or a workspa
 
 ## Screenshots
 
-These renders come from the plugin's visual harness, which mounts the real page and CSS with host token values. The list, editor, mobile layout, and dark empty state.
+These screenshots come from the plugin's visual harness, which renders the page with sample server data.
 
-![Server list](docs/screenshots/list-desktop.png)
-![Add server form](docs/screenshots/editor-desktop.png)
-![Mobile list](docs/screenshots/list-mobile.png)
-![Empty state, dark](docs/screenshots/empty-dark.png)
+### Server list
+
+![MCP server list with connection statuses and workspace selector](https://raw.githubusercontent.com/P4rthPat3l/dsh-mcp-scopes/main/docs/screenshots/list-desktop.png)
+
+### Add a server
+
+![Form for adding a remote MCP server](https://raw.githubusercontent.com/P4rthPat3l/dsh-mcp-scopes/main/docs/screenshots/editor-desktop.png)
+
+### Mobile view
+
+![MCP server list on a mobile screen](https://raw.githubusercontent.com/P4rthPat3l/dsh-mcp-scopes/main/docs/screenshots/list-mobile.png)
+
+### Dark empty state
+
+![Empty MCP server list in dark mode](https://raw.githubusercontent.com/P4rthPat3l/dsh-mcp-scopes/main/docs/screenshots/empty-dark.png)
 
 ## Install
+
+1. Open **Plugins** in DeepSeek Harness and select **Add plugin**.
+2. Enter `dsh-mcp-scopes` as the package name and install it.
+3. Open **Settings > MCP servers**. Restart DSH if the plugin manager asks you to do so.
+
+This package is a DeepSeek Harness plugin. Installing it in an unrelated Node.js project does not add it to your DSH profile.
+
+### Add a server
+
+1. In **Settings > MCP servers**, select **All workspaces** for a profile-wide server, or choose a registered workspace for a workspace-only server.
+2. Select **Add server**, choose a local command or remote URL, and fill in the connection details.
+3. Save the server. If it needs authentication, open **Details** and save a bearer token or start OAuth sign-in.
+4. Check the server status and available tools in **Details**. Tools are named `mcp__<server>__<tool>`.
+
+### Install from a local checkout
 
 ```bash
 npm install
 npm run bundle
 ```
 
-Then install the bundle from this directory with the plugin manager and reload the page. The profile links this directory, so `node_modules/` here serves the Host half; the MCP SDK stays external.
+In DSH, open **Plugins > Add plugin** and choose the checkout directory. The profile links that directory, so keep its `node_modules/` in place. Restart DSH after rebuilding the Host code.
 
 ## Configuration
 
@@ -42,10 +68,10 @@ Profile file: `$DSH_HOME/plugins/mcp-manager/<profile>.json`. It is created with
 ```json
 {
   "mcpServers": {
-    "enacton-crm": {
+    "example-crm": {
       "type": "http",
-      "url": "https://crmai.enacton.com/api/mcp/mcp",
-      "headers": { "Authorization": "Bearer ${ENACTON_MCP_TOKEN}" }
+      "url": "https://api.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${EXAMPLE_MCP_TOKEN}" }
     },
     "local-files": {
       "command": "npx",
@@ -57,13 +83,13 @@ Profile file: `$DSH_HOME/plugins/mcp-manager/<profile>.json`. It is created with
     }
   },
   "dsh": {
-    "toolPolicy": { "enacton-crm": { "allow": ["crm_*"], "deny": ["crm_delete_*"] } },
-    "timeouts": { "enacton-crm": { "connectMs": 15000 } }
+    "toolPolicy": { "example-crm": { "allow": ["crm_*"], "deny": ["crm_delete_*"] } },
+    "timeouts": { "example-crm": { "connectMs": 15000 } }
   }
 }
 ```
 
-Workspace file: `<workspace>/.dsh/mcp.json`, committed with the repository. It holds no secrets.
+Workspace file: `<workspace>/.dsh/mcp.json`. You can commit it with the repository, but do not put secrets in the file.
 
 ```json
 {
@@ -102,13 +128,26 @@ Environment references use `${NAME}`, `${NAME:-default}`, or `{env:NAME}`. The c
 
 ## Security
 
-- Tokens live in the credentials store, never in either JSON file and never in RPC responses.
+- Tokens saved through the token field live in the credentials store and are not returned in RPC responses. Do not paste secrets into configuration headers or environment values.
 - Stdio children receive the scrubbed parent environment plus the entry's `env`.
 - OAuth uses a loopback callback on `127.0.0.1`, PKCE S256, and a single-use state that expires after three minutes. A pasted redirect URL is validated against the same state.
 - Signing out deletes the grant. A rejected refresh moves the row back to `Sign-in required` and removes its tools.
 - Headers and environment values are configuration, not credentials; use the token field for secrets.
 
-## Commands
+## Development and publishing
+
+Build and check the package before publishing. The build output must exist before running `npm publish`.
+
+```bash
+npm install
+npm test
+npm pack --dry-run
+npm publish
+```
+
+Publishing requires an npm account with permission to publish `dsh-mcp-scopes`. Push the README and screenshots to the repository before publishing so the screenshot URLs work on npm.
+
+Other development commands:
 
 ```bash
 npm run bundle     # write lib/host.js and lib/client.js

@@ -5,6 +5,10 @@
   "description": "MCP server manager for DeepSeek Harness: profile and workspace scopes, OAuth-ready connections, and a Settings page.",
   "license": "MIT",
   "author": "Parth Patel",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/P4rthPat3l/dsh-mcp-scopes.git"
+  },
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -28,6 +32,10 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
+    "docs/screenshots/list-desktop.png",
+    "docs/screenshots/editor-desktop.png",
+    "docs/screenshots/list-mobile.png",
+    "docs/screenshots/empty-dark.png",
     "README.md"
   ],
   "scripts": {

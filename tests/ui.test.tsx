@@ -250,7 +250,7 @@ test('AC-015: validation reports every invalid field', () => {
 
 test('AC-015: a name is derived from the address or command', () => {
   assert.equal(deriveName('https://mcp.notion.com/mcp'), 'notion')
-  assert.equal(deriveName('https://crmai.enacton.com/api/mcp/mcp'), 'crmai')
+  assert.equal(deriveName('https://api.example.com/api/mcp/mcp'), 'example')
   assert.equal(deriveName('npx -y @modelcontextprotocol/server-filesystem /tmp'), 'filesystem')
   assert.equal(deriveName('npx\n-y\n@modelcontextprotocol/server-filesystem\n/tmp'), 'filesystem')
   assert.equal(deriveName('node /srv/mcp/server.js'), 'server')
