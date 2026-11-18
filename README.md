@@ -105,6 +105,8 @@ Workspace file: `<workspace>/.dsh/mcp.json`. You can commit it with the reposito
 }
 ```
 
+A workspace stdio entry runs in the workspace directory, so a relative `cwd`, command path, or argument path resolves against the project it is configured for rather than the Harness process directories. A profile entry keeps the process working directory, so a path there must be absolute.
+
 Local entries use `command` plus `args`. A command array such as `["npx", "-y", "pkg"]` and `environment` are accepted too. Remote entries use `type: "http"` or a bare `url`. `sse` is not supported and reports the server name.
 
 Other shapes are read and normalized:

@@ -295,7 +295,7 @@ export class ConnectionManager {
     let transport: Transport | undefined
     let client: Client | undefined
     try {
-      transport = createTransport(def, headers, authProvider)
+      transport = createTransport(def, headers, authProvider, entry.workspaceDir)
       client = new Client({ name: 'dsh-mcp-scopes', version: '0.1.0' })
       entry.client = client
       entry.transport = transport

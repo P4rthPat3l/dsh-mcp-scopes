@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -22,6 +22,15 @@ const stdioDef: ServerDef = {
 
 async function scratch(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'mcp-manager-connection-'))
+}
+
+async function callCwd(registry: ToolRegistry, serverName: string): Promise<string> {
+  const tool = registry.tools.get(`mcp__${serverName}__cwd`)
+  assert.ok(tool !== undefined)
+  const value = await tool.execute({}, { signal: new AbortController().signal })
+  const [block] = tool.output.render({}, value)
+  assert.ok(block !== undefined && block.type === 'text')
+  return block.text
 }
 
 test('AC-007: a stdio server connects, registers tools, and calls them', async () => {
@@ -95,6 +104,44 @@ test('AC-002: workspace servers stay in their own Agent scope', async () => {
     await manager.dispose()
     await rm(dirA, { recursive: true, force: true })
     await rm(dirB, { recursive: true, force: true })
+  }
+})
+
+test('AC-022: a workspace stdio server runs in its workspace directory', async () => {
+  const dir = await scratch()
+  const registry = new ToolRegistry()
+  const manager = new ConnectionManager(makeCtx(new ToolRegistry()), undefined)
+  try {
+    await manager.attachAgent({ id: 'agent-cwd', ctx: makeCtx(registry) }, dir, [{ def: stdioDef, scope: 'workspace' }])
+    await waitFor(() => manager.find('workspace', dir, 'fake')?.status === 'ready')
+    assert.equal(await callCwd(registry, 'fake'), `cwd: ${await realpath(dir)}`)
+  } finally {
+    manager.detachAgent('agent-cwd')
+    await manager.dispose()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('AC-023: an explicit relative cwd resolves against the workspace and profile servers keep the process cwd', async () => {
+  const dir = await scratch()
+  await mkdir(join(dir, 'tools'), { recursive: true })
+  const registry = new ToolRegistry()
+  const manager = new ConnectionManager(makeCtx(new ToolRegistry()), undefined)
+  const nested: ServerDef = { ...stdioDef, name: 'nested', cwd: 'tools' }
+  const hosted: ServerDef = { ...stdioDef, name: 'hosted' }
+  try {
+    await manager.attachAgent({ id: 'agent-cwd-2', ctx: makeCtx(registry) }, dir, [
+      { def: nested, scope: 'workspace' },
+      { def: hosted, scope: 'profile' },
+    ])
+    await waitFor(() => manager.find('workspace', dir, 'nested')?.status === 'ready')
+    await waitFor(() => manager.find('profile', undefined, 'hosted')?.status === 'ready')
+    assert.equal(await callCwd(registry, 'nested'), `cwd: ${await realpath(join(dir, 'tools'))}`)
+    assert.equal(await callCwd(registry, 'hosted'), `cwd: ${await realpath(process.cwd())}`)
+  } finally {
+    manager.detachAgent('agent-cwd-2')
+    await manager.dispose()
+    await rm(dir, { recursive: true, force: true })
   }
 })
 

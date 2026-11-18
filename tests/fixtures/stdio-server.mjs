@@ -18,6 +18,11 @@ const TOOLS = [
     description: 'Always fails',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'cwd',
+    description: 'Report the working directory of this process',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ]
 
 function respond(id, result) {
@@ -61,6 +66,10 @@ lines.on('line', (line) => {
     }
     if (name === 'fail') {
       respond(message.id, { content: [{ type: 'text', text: 'boom' }], isError: true })
+      return
+    }
+    if (name === 'cwd') {
+      respond(message.id, { content: [{ type: 'text', text: `cwd: ${process.cwd()}` }] })
       return
     }
     respond(message.id, { content: [{ type: 'text', text: 'unknown tool' }], isError: true })
