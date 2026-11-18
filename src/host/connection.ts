@@ -1,6 +1,7 @@
 /** Connection lifecycle: transports, discovery, status, tools, and owners. */
 
 import { createHash } from 'node:crypto'
+import manifest from '../../package.json' with { type: 'json' }
 import { Client, UnauthorizedError } from '@modelcontextprotocol/client'
 import type { CallToolResult, OAuthClientProvider, Prompt, Resource, Tool, Transport } from '@modelcontextprotocol/client'
 import { resolveBearer } from './credentials.js'
@@ -296,7 +297,7 @@ export class ConnectionManager {
     let client: Client | undefined
     try {
       transport = createTransport(def, headers, authProvider, entry.workspaceDir)
-      client = new Client({ name: 'dsh-mcp-scopes', version: '0.1.0' })
+      client = new Client({ name: 'dsh-mcp-scopes', version: manifest.version })
       entry.client = client
       entry.transport = transport
       const connectMs = def.timeouts?.connectMs ?? DEFAULT_CONNECT_TIMEOUT_MS
