@@ -1,6 +1,6 @@
 {
   "name": "dsh-mcp-scopes",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "type": "module",
   "description": "MCP server manager for DeepSeek Harness: profile and workspace scopes, OAuth-ready connections, and a Settings page.",
   "license": "MIT",
