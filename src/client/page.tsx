@@ -117,6 +117,10 @@ function statusOf(server: OverviewServer, own: boolean, t: (key: string) => stri
   }
 }
 
+function exposureLabel(server: OverviewServer, t: (key: string) => string): string {
+  return server.exposure === 'direct' ? t('exposureDirect') : t('exposureCatalog')
+}
+
 function transportLabel(server: OverviewServer, t: (key: string) => string): string {
   return server.transport === 'stdio' ? t('transportStdio') : t('transportHttp')
 }
@@ -407,6 +411,7 @@ function ServerCard(props: RowProps): ReactElement {
   const chips = [
     transportLabel(server, t),
     ...(server.authKind === 'none' ? [] : [authLabel(server, t)]),
+    exposureLabel(server, t),
     ...(server.toolCount > 0 ? [countLabel(server.toolCount, t)] : []),
   ]
   const menuItems: MenuEntry[] = [

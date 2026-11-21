@@ -49,6 +49,8 @@ export interface OverviewServer {
   readonly transport: 'stdio' | 'streamable-http'
   readonly target: string
   readonly authKind: 'none' | 'bearer' | 'oauth'
+  /** Absent means catalog exposure. */
+  readonly exposure?: 'catalog' | 'direct'
   readonly disabled: boolean
   readonly status: 'idle' | 'connecting' | 'ready' | 'needs_auth' | 'needs_token' | 'error' | 'disabled'
   readonly authConfigured?: boolean
@@ -88,6 +90,8 @@ export interface ServerDetail {
     | { readonly kind: 'oauth'; readonly scopes?: readonly string[]; readonly clientId?: string; readonly clientSecret?: string }
   readonly disabled?: boolean
   readonly toolPolicy?: { readonly allow?: readonly string[]; readonly deny?: readonly string[] }
+  /** Absent means catalog exposure. */
+  readonly exposure?: 'catalog' | 'direct'
 }
 
 export interface OverviewData {

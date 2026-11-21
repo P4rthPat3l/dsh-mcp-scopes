@@ -146,9 +146,10 @@ test('AC-004: serialization writes mcpServers and round-trips every field', () =
         auth: { kind: 'bearer', credential: 'REMOTE_TOKEN' },
         disabled: true,
         toolPolicy: { allow: ['get*'], deny: ['delete*'] },
+        exposure: 'catalog',
         timeouts: { connectMs: 5000, callMs: 60000 },
       },
-      { name: 'public', transport: 'streamable-http', url: 'https://public.example/mcp', auth: { kind: 'none' }, disabled: false, toolPolicy: {} },
+      { name: 'public', transport: 'streamable-http', url: 'https://public.example/mcp', auth: { kind: 'none' }, disabled: false, toolPolicy: {}, exposure: 'catalog' },
       {
         name: 'local',
         transport: 'stdio',
@@ -159,6 +160,7 @@ test('AC-004: serialization writes mcpServers and round-trips every field', () =
         auth: { kind: 'none' },
         disabled: false,
         toolPolicy: {},
+        exposure: 'catalog',
       },
     ],
   }
@@ -256,6 +258,56 @@ test('BR-003: a workspace disable list parses from dsh', () => {
   const parsed = parseWorkspace(JSON.stringify({ mcpServers: {}, dsh: { disableProfileServers: ['n8n'] } }))
   assert.equal(parsed.ok, true)
   if (parsed.ok) assert.deepEqual(parsed.file.disableProfileServers, ['n8n'])
+})
+
+test('EXP-001: exposure defaults to catalog, parses direct, and round-trips through serialization', () => {
+  const plain = parseProfile(JSON.stringify({ mcpServers: { a: { type: 'http', url: 'https://example.com/mcp' } } }))
+  assert.equal(plain.ok, true)
+  if (plain.ok) assert.equal(plain.file.servers[0]?.exposure, 'catalog')
+
+  const direct = parseProfile(
+    JSON.stringify({ mcpServers: { a: { type: 'http', url: 'https://example.com/mcp' } }, dsh: { exposure: { a: 'direct' } } }),
+  )
+  assert.equal(direct.ok, true)
+  if (direct.ok) {
+    assert.equal(direct.file.servers[0]?.exposure, 'direct')
+    const serialized = serializeProfile(direct.file)
+    const dsh: Record<string, unknown> = isRecord(serialized.dsh) ? serialized.dsh : {}
+    assert.deepEqual(dsh.exposure, { a: 'direct' })
+    const reparsed = parseProfile(JSON.stringify(serialized))
+    assert.equal(reparsed.ok, true)
+    if (reparsed.ok) assert.equal(reparsed.file.servers[0]?.exposure, 'direct')
+  }
+
+  const catalogOnly = parseProfile(JSON.stringify({ mcpServers: { a: { type: 'http', url: 'https://example.com/mcp' } } }))
+  assert.equal(catalogOnly.ok, true)
+  if (catalogOnly.ok) {
+    assert.equal(Object.hasOwn(serializeProfile(catalogOnly.file), 'dsh'), false)
+  }
+
+  const bad = parseProfile(
+    JSON.stringify({ mcpServers: { a: { type: 'http', url: 'https://example.com/mcp' } }, dsh: { exposure: { a: 'lazy' } } }),
+  )
+  assert.equal(bad.ok, false)
+  if (!bad.ok) assert.match(bad.error, /exposure/)
+
+  const internal = validateServer({
+    name: 'a',
+    transport: 'streamable-http',
+    url: 'https://example.com/mcp',
+    auth: { kind: 'none' },
+    exposure: 'direct',
+  })
+  assert.equal(internal.ok, true)
+  if (internal.ok) assert.equal(internal.server.exposure, 'direct')
+  const badInternal = validateServer({
+    name: 'a',
+    transport: 'streamable-http',
+    url: 'https://example.com/mcp',
+    auth: { kind: 'none' },
+    exposure: 'lazy',
+  })
+  assert.equal(badInternal.ok, false)
 })
 
 test('BR-005: wildcard policy matches and deny wins', () => {

@@ -18,6 +18,7 @@ const stdioDef: ServerDef = {
   command: process.execPath,
   args: [stdioFixture],
   auth: { kind: 'none' },
+  exposure: 'direct',
 }
 
 async function scratch(): Promise<string> {
@@ -166,6 +167,7 @@ test('AC-008: a Streamable HTTP server connects and calls', async () => {
       transport: 'streamable-http',
       url: `http://127.0.0.1:${port}/mcp`,
       auth: { kind: 'none' },
+      exposure: 'direct',
     }
     await manager.attachAgent({ id: 'agent-http', ctx: makeCtx(registry) }, dir, [{ def, scope: 'profile' }])
     await waitFor(() => manager.find('profile', undefined, 'http')?.status === 'ready', 8000)

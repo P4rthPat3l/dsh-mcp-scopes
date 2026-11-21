@@ -4,7 +4,7 @@ Connect external MCP servers from the Host, scope them to a profile or a workspa
 
 ## What it does
 
-- Discovers tools over stdio and Streamable HTTP and registers them as `mcp__<server>__<tool>`.
+- Discovers tools over stdio and Streamable HTTP and registers them as `mcp__<server>__<tool>` (direct exposure) or reaches them through the bridge (catalog exposure, the default).
 - Two scopes. Profile servers come from `$DSH_HOME/plugins/mcp-manager/<profile>.json`; workspace servers come from `<workspace>/.dsh/mcp.json`.
 - A workspace entry shadows a profile entry with the same name, and `disableProfileServers` hides inherited servers for that workspace only.
 - Tools register in each Agent's scope, so a workspace's servers never appear in another workspace's sessions.
@@ -14,6 +14,7 @@ Connect external MCP servers from the Host, scope them to a profile or a workspa
 - OAuth sign-in opens a browser tab, uses PKCE and dynamic client registration, refreshes tokens, and falls back to a pasted redirect URL when the browser cannot reach the loopback callback.
 - Bearer tokens can be pasted in the page after saving a server; the value is stored in the credentials store and never returned to the page.
 - Per-server `toolPolicy` allows and denies tools by wildcard (`get*`).
+- Two exposure modes. Catalog, the default, replaces a server's individual tool definitions with one compact prompt catalog plus three bridge tools: `mcp_search` finds a tool by what it does, `mcp_describe` returns exact schemas, and `mcp_call(server, tool, arguments)` runs the tool. A 100-tool server costs roughly 40K tokens of tool definitions under direct exposure and about 2K tokens of catalog under catalog exposure. Set `dsh.exposure.<server>: "direct"` to register a server's tools individually with their full schemas again; the policy still applies either way, and a server's own instructions text only enters the prompt in direct mode.
 
 ## Screenshots
 

@@ -62,10 +62,30 @@ function toParameters(schema: unknown): Record<string, unknown> {
   return isRecord(schema) ? { ...schema } : { type: 'object', properties: {} }
 }
 
-function toValue(result: CallToolResult): JsonValue {
+/** Project one raw MCP call result into the canonical bridge and direct-tool value. */
+export function callToolValue(result: CallToolResult): JsonValue {
   const value: Record<string, JsonValue> = { content: toJson(result.content) }
   if (result.structuredContent !== undefined) value.structuredContent = toJson(result.structuredContent)
   return value
+}
+
+/** The output contract shared by direct tools and mcp_call. */
+export function callResultOutput(): ToolDefinition['output'] {
+  return {
+    schema: {
+      type: 'object',
+      properties: {
+        content: { type: 'array', items: {} },
+        structuredContent: {},
+      },
+      required: ['content'],
+      additionalProperties: false,
+    },
+    render(_args: unknown, value: JsonValue): ContentBlock[] {
+      if (!isRecord(value) || !Array.isArray(value.content)) return [{ type: 'text', text: '' }]
+      return [{ type: 'text', text: extractText(value.content) }]
+    },
+  }
 }
 
 /** Build one DSH tool definition bound to a connected MCP client. */
@@ -79,27 +99,13 @@ export function buildToolDefinition(
     name: publicToolName(serverName, raw.name),
     description: raw.description ?? '',
     parameters: toParameters(raw.inputSchema),
-    output: {
-      schema: {
-        type: 'object',
-        properties: {
-          content: { type: 'array', items: {} },
-          structuredContent: {},
-        },
-        required: ['content'],
-        additionalProperties: false,
-      },
-      render(_args: unknown, value: JsonValue): ContentBlock[] {
-        if (!isRecord(value) || !Array.isArray(value.content)) return [{ type: 'text', text: '' }]
-        return [{ type: 'text', text: extractText(value.content) }]
-      },
-    },
+    output: callResultOutput(),
     timeoutMs,
     async execute(args: unknown, exec): Promise<JsonValue> {
       const payload = isRecord(args) ? args : {}
       const result = await call(payload, exec.signal, timeoutMs)
       if (result.isError === true) throw new Error(extractText(result.content))
-      return toValue(result)
+      return callToolValue(result)
     },
   }
 }

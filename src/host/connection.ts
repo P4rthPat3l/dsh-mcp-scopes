@@ -6,6 +6,8 @@ import { Client, UnauthorizedError } from '@modelcontextprotocol/client'
 import type { CallToolResult, OAuthClientProvider, Prompt, Resource, Tool, Transport } from '@modelcontextprotocol/client'
 import { resolveBearer } from './credentials.js'
 import { buildToolDefinition } from './naming.js'
+import { buildBridgeTools, type BridgeScope } from './bridge.js'
+import { buildCatalog, catalogToolOf, type CatalogServer } from './catalog.js'
 import { createTransport } from './transport.js'
 import {
   DEFAULT_CALL_TIMEOUT_MS,
@@ -88,6 +90,7 @@ function delay(ms: number): Promise<void> {
 export class ConnectionManager {
   private readonly entries = new Map<string, Entry>()
   private readonly agentEntries = new Map<string, Entry[]>()
+  private readonly bridges = new Map<string, () => void>()
 
   constructor(
     private readonly ctx: HostContext,
@@ -171,10 +174,12 @@ export class ConnectionManager {
       if (item.def.disabled !== true) work.push(this.connect(entry))
     }
     this.agentEntries.set(agent.id, attached)
+    this.registerBridge(agent.id, agent.ctx)
     await Promise.race([Promise.all(work), delay(Math.max(0, deadline - Date.now()))])
   }
 
   detachAgent(agentId: string): void {
+    this.disposeBridge(agentId)
     this.agentEntries.delete(agentId)
     const label = `agent:${agentId}`
     for (const entry of [...this.entries.values()]) {
@@ -197,6 +202,34 @@ export class ConnectionManager {
     for (const dispose of owner.disposers) dispose()
     owner.disposers = []
     entry.owners.delete(label)
+  }
+
+  /** Register the search, describe, and call bridge when the Agent attached any catalog server. */
+  private registerBridge(agentId: string, ctx: HostContext): void {
+    this.disposeBridge(agentId)
+    const attached = this.agentEntries.get(agentId) ?? []
+    if (!attached.some((entry) => entry.def.exposure !== 'direct')) return
+    const scope: BridgeScope = {
+      entries: () => (this.agentEntries.get(agentId) ?? []).filter((entry) => entry.def.exposure !== 'direct'),
+    }
+    const disposers: (() => void)[] = []
+    try {
+      for (const definition of buildBridgeTools(scope)) disposers.push(ctx.tools.register(definition))
+    } catch (error) {
+      for (const dispose of disposers) dispose()
+      ctx.logger.error(`mcp-manager: bridge tool registration failed: ${String(error)}`)
+      return
+    }
+    this.bridges.set(agentId, () => {
+      for (const dispose of disposers) dispose()
+    })
+  }
+
+  private disposeBridge(agentId: string): void {
+    const dispose = this.bridges.get(agentId)
+    if (dispose === undefined) return
+    dispose()
+    this.bridges.delete(agentId)
   }
 
   private remove(entry: Entry): void {
@@ -306,7 +339,9 @@ export class ConnectionManager {
       })
 
       const instructions = client.getInstructions() ?? ''
-      if (Buffer.byteLength(instructions, 'utf8') > MAX_INSTRUCTION_BYTES) {
+      // Catalog servers never put their instructions in the prompt, so only a
+      // direct server can overflow the model context with them.
+      if (def.exposure === 'direct' && Buffer.byteLength(instructions, 'utf8') > MAX_INSTRUCTION_BYTES) {
         throw new Error(`server instructions exceed ${MAX_INSTRUCTION_BYTES} bytes`)
       }
 
@@ -405,6 +440,7 @@ export class ConnectionManager {
   }
 
   private registerForOwner(entry: Entry, owner: Owner): void {
+    if (entry.def.exposure !== 'direct') return
     const disposers: (() => void)[] = []
     try {
       for (const definition of entry.definitions) disposers.push(owner.ctx.tools.register(definition))
@@ -459,6 +495,7 @@ export class ConnectionManager {
       transport: entry.def.transport,
       target: entry.def.transport === 'stdio' ? (entry.def.command ?? '') : (entry.def.url ?? ''),
       authKind: entry.def.auth.kind,
+      exposure: entry.def.exposure ?? 'catalog',
       disabled: entry.def.disabled === true,
       status: entry.status,
       ...(entry.oauthUrl === undefined ? {} : { oauthUrl: entry.oauthUrl }),
@@ -492,15 +529,36 @@ export class ConnectionManager {
   instructionsFor(agentId: string): string {
     const entries = this.agentEntries.get(agentId) ?? []
     const sections: string[] = []
+    const catalogServers: CatalogServer[] = []
     for (const entry of entries) {
+      if (entry.def.exposure !== 'direct') {
+        if (entry.status !== 'ready') continue
+        const tools = entry.rawTools
+          .filter((raw) => toolAllowed(entry.def.toolPolicy, raw.name))
+          .map(catalogToolOf)
+        if (tools.length > 0) catalogServers.push({ name: entry.def.name, tools })
+        continue
+      }
       if (entry.status !== 'ready' || entry.instructions.trim() === '') continue
       sections.push(`<server name="${entry.def.name}">\n${entry.instructions.trim()}\n</server>`)
+    }
+    if (catalogServers.length > 0) {
+      sections.push(
+        [
+          'MCP tool bridge',
+          'Tools from the servers below are reached through the mcp_call tool (fields: server, tool, arguments) instead of individual tool definitions.',
+          'Every tool is listed here. Use mcp_search to find one by what it does, and mcp_describe for its exact parameters.',
+          '',
+          buildCatalog(catalogServers),
+        ].join('\n'),
+      )
     }
     return sections.join('\n')
   }
 
   /** Instructions for a profile server, used by overview copy only. */
   async dispose(): Promise<void> {
+    for (const agentId of [...this.bridges.keys()]) this.disposeBridge(agentId)
     for (const entry of [...this.entries.values()]) this.remove(entry)
     this.agentEntries.clear()
   }
@@ -512,6 +570,7 @@ export function idleView(def: ServerDef): ServerView {
     transport: def.transport,
     target: def.transport === 'stdio' ? (def.command ?? '') : (def.url ?? ''),
     authKind: def.auth.kind,
+    exposure: def.exposure ?? 'catalog',
     disabled: def.disabled === true,
     status: def.disabled === true ? 'disabled' : 'idle',
     toolCount: 0,

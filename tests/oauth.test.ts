@@ -44,6 +44,7 @@ test('AC-011: an OAuth server completes sign-in and persists the grant', async (
       transport: 'streamable-http',
       url: `http://127.0.0.1:${port}/mcp`,
       auth: { kind: 'oauth' },
+      exposure: 'direct',
     }
     await manager.attachAgent({ id: 'agent-oauth', ctx: makeCtx(registry) }, dir, [{ def, scope: 'profile' }])
     const entry = manager.find('profile', undefined, 'oauth')

@@ -370,6 +370,41 @@ test('AC-018: editing keeps fields the form does not model', () => {
   assert.deepEqual(mergedRemote.timeouts, { callMs: 2000 })
 })
 
+test('EXP-014: the edit form offers catalog and direct exposure and round-trips it', () => {
+  const html = renderToStaticMarkup(
+    <Editor
+      mode="edit"
+      draft={{ ...EMPTY_DRAFT }}
+      existingNames={[]}
+      onChange={() => undefined}
+      onSave={() => undefined}
+      t={(key) => key}
+    />,
+  )
+  assert.match(html, /id="mcp-exposure-catalog"/)
+  assert.match(html, /id="mcp-exposure-direct"/)
+  assert.match(html, /exposureHint/)
+
+  const draft = draftToServer({ ...EMPTY_DRAFT, kind: 'remote', connection: 'https://example.com/mcp', name: 'a' })
+  assert.equal(draft.exposure, 'catalog')
+  const directDraft = draftToServer({
+    ...EMPTY_DRAFT,
+    kind: 'remote',
+    connection: 'https://example.com/mcp',
+    name: 'a',
+    exposure: 'direct',
+  })
+  assert.equal(directDraft.exposure, 'direct')
+  const fromDirect = draftFromDetail({
+    name: 'a',
+    transport: 'streamable-http',
+    url: 'https://example.com/mcp',
+    auth: { kind: 'none' },
+    exposure: 'direct',
+  })
+  assert.equal(fromDirect.exposure, 'direct')
+})
+
 test('AC-015: an empty scope shows the empty state with its file path', async () => {
   const empty: OverviewData = {
     profile: { path: '/empty/profile.json', servers: [] },

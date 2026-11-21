@@ -44,7 +44,10 @@ lines.on('line', (line) => {
       protocolVersion: message.params?.protocolVersion ?? '2026-07-28',
       capabilities: { tools: {} },
       serverInfo: { name: 'fixture-stdio', version: '1.0.0' },
-      instructions: 'Use echo for a quick self-test.',
+      instructions:
+        process.env.FIXTURE_VERBOSE_INSTRUCTIONS === '1'
+          ? 'x'.repeat(40_000)
+          : 'Use echo for a quick self-test.',
     })
     return
   }

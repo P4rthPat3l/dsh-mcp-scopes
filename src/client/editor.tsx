@@ -16,6 +16,7 @@ import type { AuthConfig, ServerDef } from '../host/types.js'
 
 export type DraftKind = 'local' | 'remote'
 export type DraftAuth = 'none' | 'bearer' | 'oauth'
+export type DraftExposure = 'catalog' | 'direct'
 
 /** One key and value row in the headers or environment editor. */
 export interface PairEntry {
@@ -35,6 +36,7 @@ export interface Draft {
   readonly allow: string
   readonly deny: string
   readonly enabled: boolean
+  readonly exposure: DraftExposure
 }
 
 export const EMPTY_DRAFT: Draft = {
@@ -49,6 +51,7 @@ export const EMPTY_DRAFT: Draft = {
   allow: '',
   deny: '',
   enabled: true,
+  exposure: 'catalog',
 }
 
 /** Field-level validation results, keyed by the field that owns the message. */
@@ -227,6 +230,7 @@ export function draftToServer(draft: Draft, existing?: ServerDef): ServerDef {
     transport: kind === 'local' ? ('stdio' as const) : ('streamable-http' as const),
     auth: authFor(draft, existing?.auth),
     disabled: !draft.enabled,
+    exposure: draft.exposure,
     ...(allow.length === 0 && deny.length === 0
       ? {}
       : { toolPolicy: { ...(allow.length === 0 ? {} : { allow }), ...(deny.length === 0 ? {} : { deny }) } }),
@@ -269,6 +273,7 @@ export function draftFromDetail(detail: ServerDetail): Draft {
     allow: (detail.toolPolicy?.allow ?? []).join(', '),
     deny: (detail.toolPolicy?.deny ?? []).join(', '),
     enabled: detail.disabled !== true,
+    exposure: detail.exposure === 'direct' ? 'direct' : 'catalog',
   }
 }
 
@@ -700,6 +705,21 @@ export function Editor(props: EditorProps): ReactElement {
           {local ? (
             <PairEditor kind="env" entries={draft.env} t={t} onChange={(entries) => set('env', entries)} />
           ) : null}
+
+          <div className="mcp-field">
+            <span className="mcp-field-label">{t('exposure')}</span>
+            <SegmentedControl<DraftExposure>
+              id="mcp-exposure"
+              value={draft.exposure}
+              label={t('exposure')}
+              options={[
+                { value: 'catalog', label: t('exposureCatalog') },
+                { value: 'direct', label: t('exposureDirect') },
+              ]}
+              onChange={(value) => set('exposure', value)}
+            />
+            <span className="mcp-hint">{t('exposureHint')}</span>
+          </div>
 
           <div className="mcp-field">
             <div className="mcp-grid2">

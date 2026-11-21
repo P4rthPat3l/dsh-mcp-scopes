@@ -4,6 +4,9 @@ export type ScopeKind = 'profile' | 'workspace'
 
 export type TransportKind = 'stdio' | 'streamable-http'
 
+/** How a server's tools reach the model: a prompt catalog plus the bridge, or direct tool definitions. */
+export type ExposureKind = 'catalog' | 'direct'
+
 export interface AuthNone {
   readonly kind: 'none'
 }
@@ -46,6 +49,8 @@ export interface ServerDef {
   readonly disabled?: boolean
   readonly toolPolicy?: ToolPolicy
   readonly timeouts?: ServerTimeouts
+  /** Absent means catalog exposure. */
+  readonly exposure?: ExposureKind
 }
 
 export interface ProfileFile {
@@ -86,6 +91,8 @@ export interface ServerView {
   readonly name: string
   readonly origin?: ScopeKind
   readonly transport: TransportKind
+  /** Absent means catalog exposure. */
+  readonly exposure?: ExposureKind
   readonly target: string
   readonly authKind: AuthConfig['kind']
   readonly disabled: boolean

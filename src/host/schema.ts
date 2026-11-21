@@ -1,6 +1,6 @@
 /** Validation, wildcard matching, config parsing, and serialization. */
 
-import type { AuthConfig, ProfileFile, ServerDef, ServerTimeouts, ToolPolicy, TransportKind, WorkspaceFile } from './types.js'
+import type { AuthConfig, ExposureKind, ProfileFile, ServerDef, ServerTimeouts, ToolPolicy, TransportKind, WorkspaceFile } from './types.js'
 
 /** Server-name contract; also the namespace used in tool names. */
 export const NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
@@ -87,6 +87,12 @@ function parseAuth(value: unknown): AuthConfig | { error: string } {
   return { error: 'auth.kind must be none, bearer, or oauth' }
 }
 
+function parseExposure(value: unknown): ExposureKind | { error: string } {
+  if (value === undefined) return 'catalog'
+  if (value === 'catalog' || value === 'direct') return value
+  return { error: 'exposure must be catalog or direct' }
+}
+
 function parsePolicy(value: unknown): ToolPolicy | { error: string } {
   if (value === undefined) return {}
   if (!isRecord(value)) return { error: 'toolPolicy must be an object' }
@@ -120,6 +126,8 @@ export function validateServer(value: unknown): { ok: true; server: ServerDef } 
   }
   const policy = parsePolicy(value.toolPolicy)
   if ('error' in policy) return { ok: false, error: `server.toolPolicy: ${policy.error}` }
+  const exposure = parseExposure(value.exposure)
+  if (typeof exposure !== 'string') return { ok: false, error: `server.exposure: ${exposure.error}` }
   const timeouts = value.timeouts
   let connectMs: number | undefined
   let callMs: number | undefined
@@ -138,6 +146,7 @@ export function validateServer(value: unknown): { ok: true; server: ServerDef } 
     auth,
     disabled: disabled ?? false,
     toolPolicy: policy,
+    exposure,
     ...(connectMs === undefined && callMs === undefined
       ? {}
       : {
@@ -345,6 +354,9 @@ function normalizeEntry(
   const policy = parsePolicy(isRecord(dsh.toolPolicy) ? dsh.toolPolicy[name] : undefined)
   if ('error' in policy) return { ok: false, error: `server "${name}".toolPolicy: ${policy.error}` }
 
+  const exposure = parseExposure(isRecord(dsh.exposure) ? dsh.exposure[name] : undefined)
+  if (typeof exposure !== 'string') return { ok: false, error: `server "${name}".exposure: ${exposure.error}` }
+
   const timeoutsRaw = isRecord(dsh.timeouts) ? dsh.timeouts[name] : undefined
   let timeouts: ServerTimeouts | undefined
   if (timeoutsRaw !== undefined) {
@@ -365,6 +377,7 @@ function normalizeEntry(
     auth,
     disabled,
     toolPolicy: policy,
+    exposure,
     ...(timeouts === undefined ? {} : { timeouts }),
   }
 
@@ -528,6 +541,7 @@ function serializeDocument(file: ProfileFile | WorkspaceFile, workspace: boolean
   const auth: Record<string, unknown> = {}
   const toolPolicy: Record<string, unknown> = {}
   const timeouts: Record<string, unknown> = {}
+  const exposure: Record<string, unknown> = {}
 
   for (const server of file.servers) {
     mcpServers[server.name] = serializeEntry(server)
@@ -549,12 +563,14 @@ function serializeDocument(file: ProfileFile | WorkspaceFile, workspace: boolean
         ...(callMs === undefined ? {} : { callMs }),
       }
     }
+    if (server.exposure === 'direct') exposure[server.name] = 'direct'
   }
 
   const dsh: Record<string, unknown> = {}
   if (Object.keys(auth).length > 0) dsh.auth = auth
   if (Object.keys(toolPolicy).length > 0) dsh.toolPolicy = toolPolicy
   if (Object.keys(timeouts).length > 0) dsh.timeouts = timeouts
+  if (Object.keys(exposure).length > 0) dsh.exposure = exposure
   if (workspace && 'disableProfileServers' in file) {
     const disabled = file.disableProfileServers ?? []
     if (disabled.length > 0) dsh.disableProfileServers = [...disabled]
